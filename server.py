@@ -201,6 +201,17 @@ class GameStore:
             self._start_next_round_locked(room)
             self._recompute_totals_locked(room)
 
+    def return_to_lobby(self, room_code: str, player_id: str) -> None:
+        with self.lock:
+            room = self._get_room(room_code)
+            if player_id != room.host_id:
+                raise ValueError("רק המארח יכול לפתוח משחק חדש")
+            room.phase = "lobby"
+            room.rounds = []
+            room.finished_at = None
+            self._reset_lobby_categories(room)
+            self._recompute_totals_locked(room)
+
     def terminate_game(self, room_code: str, player_id: str) -> None:
         with self.lock:
             room = self._get_room(room_code)
@@ -223,10 +234,22 @@ class GameStore:
             current.answers[player.id] = {
                 category: (answers.get(category, "") or "").strip() for category in room.selected_categories
             }
-            if current.countdown_started_at is None and self._is_form_complete(room.selected_categories, current.answers[player.id]):
-                current.countdown_started_at = now_ts()
-                current.ends_at = current.countdown_started_at + room.finish_window_seconds
-                current.triggered_by = player.id
+
+    def trigger_countdown(self, room_code: str, player_id: str) -> None:
+        with self.lock:
+            room = self._get_room(room_code)
+            player = self._get_player(room, player_id)
+            self._ensure_round_up_to_date(room)
+            if room.phase != "playing":
+                raise ValueError("אפשר להפעיל ספירה לאחור רק בזמן הסבב")
+            current = room.rounds[-1]
+            if current.countdown_started_at is not None:
+                raise ValueError("הספירה לאחור כבר התחילה")
+            if not self._is_form_complete(room.selected_categories, current.answers.get(player.id, {})):
+                raise ValueError("צריך למלא את כל 4 התשובות לפני שמסיימים")
+            current.countdown_started_at = now_ts()
+            current.ends_at = current.countdown_started_at + room.finish_window_seconds
+            current.triggered_by = player.id
 
     def toggle_approval(self, room_code: str, player_id: str, target_player_id: str, category: str) -> None:
         with self.lock:
@@ -542,10 +565,12 @@ class AppHandler(BaseHTTPRequestHandler):
                 body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
             ),
             "/api/start-game": lambda: STORE.start_game(body.get("roomCode", ""), body.get("playerId", "")),
+            "/api/return-to-lobby": lambda: STORE.return_to_lobby(body.get("roomCode", ""), body.get("playerId", "")),
             "/api/terminate-game": lambda: STORE.terminate_game(body.get("roomCode", ""), body.get("playerId", "")),
             "/api/save-answers": lambda: STORE.save_answers(
                 body.get("roomCode", ""), body.get("playerId", ""), body.get("answers", {})
             ),
+            "/api/trigger-countdown": lambda: STORE.trigger_countdown(body.get("roomCode", ""), body.get("playerId", "")),
             "/api/toggle-approval": lambda: STORE.toggle_approval(
                 body.get("roomCode", ""),
                 body.get("playerId", ""),
