@@ -103,8 +103,12 @@ async function joinRoom() {
 
 async function refreshState() {
   if (!state.session) {
-    state.game = null;
-    render();
+    clearInterval(state.timerHandle);
+    state.remainingSeconds = 0;
+    if (state.game !== null) {
+      state.game = null;
+      render();
+    }
     return;
   }
   try {
@@ -131,7 +135,11 @@ async function refreshState() {
 
 function startPolling() {
   clearInterval(state.pollHandle);
-  state.pollHandle = setInterval(refreshState, 1000);
+  state.pollHandle = setInterval(() => {
+    if (state.session) {
+      refreshState();
+    }
+  }, 1000);
 }
 
 function syncTimer() {
@@ -158,7 +166,7 @@ function paintStatusBar() {
   if (timer) {
     timer.textContent = state.game && state.game.round && state.game.round.endsAt
       ? "נשארו " + state.remainingSeconds + " שניות"
-      : "הטיימר יתחיל כשמישהו יסיים את כל הטופס";
+      : "ממתינים לשחקן שיסיים";
   }
   const saveState = document.querySelector("[data-save-status]");
   if (saveState) {
@@ -216,8 +224,25 @@ async function startGame() {
   await refreshState();
 }
 
+async function returnToLobby() {
+  await api("/api/return-to-lobby", {
+    roomCode: state.session.room_code,
+    playerId: state.session.player_id,
+  });
+  await refreshState();
+}
+
 async function terminateGame() {
   await api("/api/terminate-game", {
+    roomCode: state.session.room_code,
+    playerId: state.session.player_id,
+  });
+  await refreshState();
+}
+
+async function triggerCountdown() {
+  await flushAnswerSave();
+  await api("/api/trigger-countdown", {
     roomCode: state.session.room_code,
     playerId: state.session.player_id,
   });
@@ -371,6 +396,7 @@ function captureRenderSnapshot() {
   }
   state.renderSnapshot = {
     selector,
+    value: active.value,
     selectionStart: active.selectionStart || 0,
     selectionEnd: active.selectionEnd || 0,
   };
@@ -383,6 +409,7 @@ function restoreRenderSnapshot() {
     state.renderSnapshot = null;
     return;
   }
+  input.value = state.renderSnapshot.value;
   input.focus();
   if (typeof input.setSelectionRange === "function") {
     input.setSelectionRange(state.renderSnapshot.selectionStart, state.renderSnapshot.selectionEnd);
@@ -509,10 +536,11 @@ function renderLobby() {
 
 function renderPlaying() {
   const round = state.game.round;
+  const myFormComplete = state.game.selectedCategories.every((category) => (state.drafts.answers[category] || "").trim());
   const countdownClass = round.triggeredByName ? " countdown-live" : "";
   const banner = round.triggeredByName
     ? '<div class="pill countdown-pill">⏰ ' + escapeHtml(round.triggeredByName) + " השלים ראשון. הספירה לאחור התחילה.</div>"
-    : '<div class="pill">🧠 סיימו את כל הטופס כדי להפעיל את הטיימר לשאר המשתתפים.</div>';
+    : '<div class="pill">🧠 מסיימים למלא, ואז לוחצים על הכפתור כדי להתחיל את הספירה לשאר המשתתפים.</div>';
   const answersHtml = state.game.selectedCategories.map((category) => {
     return (
       "<label>" +
@@ -527,6 +555,11 @@ function renderPlaying() {
       "</label>"
     );
   }).join("");
+  const finishAction = round.triggeredByName
+    ? '<div class="pill">הספירה כבר הופעלה. אפשר עדיין ללטש תשובות עד שהזמן ייגמר.</div>'
+    : '<div class="stack"><button type="button" id="finish-round" ' +
+      (myFormComplete ? "" : "disabled") +
+      '>✅ סיימתי - התחילו את הספירה</button><p class="helper">הכפתור נפתח רק אחרי שממלאים את כל 4 התשובות.</p></div>';
 
   return (
     '<section class="card stack' +
@@ -536,16 +569,22 @@ function renderPlaying() {
     round.roundNumber +
     " מתוך " +
     state.game.maxRounds +
-    '</div><h2>ממלאים תשובות ✍️</h2><p class="status-copy">הטיימר יתחיל רק כשהראשון יסיים את כל 4 התשובות.</p></div>' +
-    '<div class="stack"><div class="letter-badge">' +
+    '</div><h2>ממלאים תשובות ✍️</h2><p class="status-copy">אין ספירה אוטומטית. מי שמסיים ראשון מפעיל את הזמן בלחיצה אחת.</p></div>' +
+    '<div class="stack round-meter"><div class="letter-badge">' +
     escapeHtml(round.letter) +
-    '</div><div class="timer" data-timer>הטיימר יתחיל כשמישהו יסיים את כל הטופס</div><div class="muted" data-save-status>' +
+    '</div><div class="timer-label">' +
+    (round.triggeredByName ? "הספירה בעיצומה" : "השעון ממתין") +
+    '</div><div class="timer" data-timer>' +
+    (round.endsAt ? "נשארו " + state.remainingSeconds + " שניות" : "ממתינים לשחקן שיסיים") +
+    '</div><div class="muted" data-save-status>' +
     (state.saveStatus || "התשובות נשמרות אוטומטית") +
     "</div></div></div>" +
     banner +
     '<form class="answers-grid">' +
     answersHtml +
-    "</form></section>"
+    "</form>" +
+    finishAction +
+    "</section>"
   );
 }
 
@@ -630,7 +669,6 @@ function renderFinished() {
 }
 
 function renderGame() {
-  captureRenderSnapshot();
   let main = "";
   if (state.game.phase === "lobby") {
     main = renderLobby();
@@ -647,8 +685,6 @@ function renderGame() {
     '<section class="stack">' +
     main +
     "</section></div>";
-
-  restoreRenderSnapshot();
 
   const shareButton = document.querySelector("#share-room");
   if (shareButton) shareButton.addEventListener("click", withErrorHandling(shareRoom));
@@ -671,6 +707,8 @@ function renderGame() {
 
   if (state.game.phase === "playing") {
     attachAnswerDraftInputs();
+    const finishButton = document.querySelector("#finish-round");
+    if (finishButton) finishButton.addEventListener("click", withErrorHandling(triggerCountdown));
   }
 
   if (state.game.phase === "review" || state.game.phase === "finished") {
@@ -683,7 +721,7 @@ function renderGame() {
     const advanceButton = document.querySelector("#advance-review");
     if (advanceButton) advanceButton.addEventListener("click", withErrorHandling(advanceReview));
     const restartButton = document.querySelector("#restart-game");
-    if (restartButton) restartButton.addEventListener("click", withErrorHandling(startGame));
+    if (restartButton) restartButton.addEventListener("click", withErrorHandling(returnToLobby));
   }
 
   if (state.game.phase === "playing" || state.game.phase === "review") {
@@ -693,14 +731,17 @@ function renderGame() {
 }
 
 function render() {
+  captureRenderSnapshot();
   if (!state.session || !state.game) {
     renderWelcome();
     if (state.error) {
       app.insertAdjacentHTML("afterbegin", '<div class="error-banner">' + escapeHtml(state.error) + "</div>");
     }
+    restoreRenderSnapshot();
     return;
   }
   renderGame();
+  restoreRenderSnapshot();
 }
 
 function withErrorHandling(fn) {
