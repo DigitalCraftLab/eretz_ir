@@ -1,4 +1,60 @@
-משחק קבוצתי בעברית
-ארץ עיר
-2 עד 6 משתתפים, כל אחד מהמכשיר שלו. בוחרים 4 קטגוריות, מגדירים את אורך הסבב, מקבלים אות אקראית, והמילים נשמרות אוטומטית עד שהזמן נגמר.
+<!doctype html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ארץ עיר</title>
+    <meta
+      name="description"
+      content="ארץ עיר אונליין בעברית ל-2 עד 6 משתתפים עם חדרים משותפים, קטגוריות לבחירה, טיימר משתנה ובדיקת תשובות."
+    />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <p class="eyebrow">משחק מילים קבוצתי בעברית</p>
+        <h1>ארץ עיר</h1>
+        <p class="hero-copy">
+          פותחים חדר, בוחרים 4 קטגוריות, מגדירים את אורך הסבב, מקבלים אות אקראית,
+          וכותבים תשובות שנשמרות אוטומטית עד שהזמן נגמר.
+        </p>
+      </header>
 
+      <main id="app" class="app-grid" aria-live="polite"></main>
+    </div>
+
+    <template id="welcome-template">
+      <section class="card form-card stack">
+        <div>
+          <h2>פתיחת חדר או הצטרפות</h2>
+          <p class="helper">
+            2 עד 6 משתתפים, כל אחד מהמכשיר שלו. כולם יכולים להציע ולהצביע על קטגוריות,
+            והמארח נועל את ארבע הקטגוריות הסופיות.
+          </p>
+        </div>
+
+        <label for="player-name">
+          השם שלך
+          <input id="player-name" maxlength="24" placeholder="לדוגמה: יואב" autocomplete="nickname" />
+        </label>
+
+        <div class="button-row">
+          <button id="create-room" type="button">יצירת חדר חדש</button>
+        </div>
+
+        <div class="join-row">
+          <label for="room-code" class="sr-only">קוד חדר</label>
+          <input id="room-code" maxlength="5" placeholder="קוד חדר" autocomplete="off" />
+          <button id="join-room" type="button" class="secondary">הצטרפות לחדר</button>
+        </div>
+
+        <p class="helper">
+          בסוף כל סבב המארח בודק כל קטגוריה בנפרד ומאשר אם המילה קיימת ומתאימה לקטגוריה.
+        </p>
+      </section>
+    </template>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
