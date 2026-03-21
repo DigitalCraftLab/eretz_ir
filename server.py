@@ -19,7 +19,7 @@ BASE_DIR = Path(__file__).parent
 STATIC_DIR = BASE_DIR / "static"
 
 HEBREW_LETTERS = list("אבגדהוזחטיכלמנסעפצקרשת")
-ROUND_DURATION_SECONDS = 60
+ROUND_DURATION_OPTIONS = [60, 90, 180]
 MAX_ROUNDS = 4
 ROOM_SIZE_LIMIT = 6
 CATEGORY_COUNT = 4
@@ -89,9 +89,10 @@ class RoundState:
     started_at: float
     ends_at: float
     answers: dict[str, dict[str, str]] = field(default_factory=dict)
-    submitted_at: dict[str, float] = field(default_factory=dict)
+    verification: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     review_scores: dict[str, dict[str, Any]] = field(default_factory=dict)
     likes: dict[str, dict[str, list[str]]] = field(default_factory=dict)
+    review_category_index: int = 0
 
 
 @dataclass
@@ -105,6 +106,7 @@ class Room:
     proposed_categories: list[dict[str, Any]] = field(default_factory=list)
     category_votes: dict[str, list[str]] = field(default_factory=dict)
     rounds: list[RoundState] = field(default_factory=list)
+    round_duration_seconds: int = 60
     finished_at: float | None = None
 
 
@@ -136,6 +138,17 @@ class GameStore:
             player = Player(id=uuid4().hex, name=cleaned_name, joined_at=now_ts())
             room.players[player.id] = player
             return {"room_code": room.code, "player_id": player.id}
+
+    def set_round_duration(self, room_code: str, player_id: str, seconds: int) -> None:
+        with self.lock:
+            room = self._get_room(room_code)
+            if player_id != room.host_id:
+                raise ValueError("רק המארח יכול לשנות את זמן המשחק")
+            if room.phase != "lobby":
+                raise ValueError("אפשר לשנות זמן רק בלובי")
+            if seconds not in ROUND_DURATION_OPTIONS:
+                raise ValueError("זמן לא תקין")
+            room.round_duration_seconds = seconds
 
     def propose_category(self, room_code: str, player_id: str, category: str) -> None:
         with self.lock:
@@ -171,9 +184,7 @@ class GameStore:
             room = self._get_room(room_code)
             if player_id != room.host_id:
                 raise ValueError("רק המארח יכול לנעול קטגוריות")
-            label = category.strip()
-            if not any(normalize_hebrew(item["name"]) == normalize_hebrew(label) for item in room.proposed_categories):
-                raise ValueError("הקטגוריה לא קיימת")
+            label = self._find_category_name(room, category)
             existing = next(
                 (item for item in room.selected_categories if normalize_hebrew(item) == normalize_hebrew(label)),
                 None,
@@ -198,27 +209,23 @@ class GameStore:
                 raise ValueError("צריך לבחור 4 קטגוריות")
             if room.phase not in {"lobby", "finished"}:
                 raise ValueError("המשחק כבר התחיל")
-            for participant in room.players.values():
-                participant.total_score = 0
-                participant.liked_received = 0
             room.rounds = []
             room.finished_at = None
             room.phase = "playing"
             self._start_next_round_locked(room)
+            self._recompute_totals_locked(room)
 
-    def submit_answers(self, room_code: str, player_id: str, answers: dict[str, str]) -> None:
+    def save_answers(self, room_code: str, player_id: str, answers: dict[str, str]) -> None:
         with self.lock:
             room = self._get_room(room_code)
             player = self._get_player(room, player_id)
             self._ensure_round_up_to_date(room)
             if room.phase != "playing":
-                raise ValueError("לא ניתן להגיש תשובות עכשיו")
+                return
             current = room.rounds[-1]
             current.answers[player.id] = {
                 category: (answers.get(category, "") or "").strip() for category in room.selected_categories
             }
-            current.submitted_at[player.id] = now_ts()
-            self._maybe_end_round_locked(room)
 
     def toggle_like(self, room_code: str, player_id: str, target_player_id: str, category: str) -> None:
         with self.lock:
@@ -228,24 +235,41 @@ class GameStore:
             if room.phase != "review":
                 raise ValueError("לייקים זמינים רק בזמן הבדיקה")
             current = room.rounds[-1]
+            category_name = self._find_selected_category(room, category)
             if target_player_id == player_id:
                 raise ValueError("אי אפשר לעשות לייק לעצמך")
             if target_player_id not in current.review_scores:
                 raise ValueError("שחקן לא נמצא")
-            if category not in room.selected_categories:
-                raise ValueError("קטגוריה לא תקינה")
-            current.likes.setdefault(target_player_id, {}).setdefault(category, [])
-            bucket = current.likes[target_player_id][category]
+            current.likes.setdefault(target_player_id, {}).setdefault(category_name, [])
+            bucket = current.likes[target_player_id][category_name]
             if player_id in bucket:
                 bucket.remove(player_id)
-                room.players[target_player_id].liked_received -= 1
-                room.players[target_player_id].total_score -= 1
             else:
                 bucket.append(player_id)
-                room.players[target_player_id].liked_received += 1
-                room.players[target_player_id].total_score += 1
+            self._recompute_totals_locked(room)
 
-    def advance_after_review(self, room_code: str, player_id: str) -> None:
+    def toggle_verification(self, room_code: str, player_id: str, target_player_id: str, category: str, check: str) -> None:
+        with self.lock:
+            room = self._get_room(room_code)
+            if player_id != room.host_id:
+                raise ValueError("רק המארח יכול לאשר תשובות")
+            self._ensure_round_up_to_date(room)
+            if room.phase != "review":
+                raise ValueError("אפשר לאשר תשובות רק בזמן הבדיקה")
+            if check not in {"word_exists", "matches_category"}:
+                raise ValueError("בדיקה לא תקינה")
+            current = room.rounds[-1]
+            if target_player_id not in current.verification:
+                raise ValueError("שחקן לא נמצא")
+            category_name = self._find_selected_category(room, category)
+            checks = current.verification[target_player_id][category_name]
+            if not checks["starts_with_letter"] or not current.answers[target_player_id].get(category_name, "").strip():
+                raise ValueError("אי אפשר לאשר תשובה לא תקינה")
+            checks[check] = not bool(checks[check])
+            self._recompute_round_scores_locked(room, current)
+            self._recompute_totals_locked(room)
+
+    def advance_review(self, room_code: str, player_id: str) -> None:
         with self.lock:
             room = self._get_room(room_code)
             if player_id != room.host_id:
@@ -253,6 +277,10 @@ class GameStore:
             self._ensure_round_up_to_date(room)
             if room.phase != "review":
                 raise ValueError("אין כרגע סבב בדיקה")
+            current = room.rounds[-1]
+            if current.review_category_index < len(room.selected_categories) - 1:
+                current.review_category_index += 1
+                return
             if len(room.rounds) >= MAX_ROUNDS:
                 room.phase = "finished"
                 room.finished_at = now_ts()
@@ -267,7 +295,7 @@ class GameStore:
             self._ensure_round_up_to_date(room)
             current_round = room.rounds[-1] if room.rounds else None
             players = sorted(room.players.values(), key=lambda item: (-item.total_score, item.joined_at))
-            state = {
+            return {
                 "roomCode": room.code,
                 "phase": room.phase,
                 "hostId": room.host_id,
@@ -293,49 +321,50 @@ class GameStore:
                 ],
                 "round": self._round_snapshot(room, current_round, player.id),
                 "maxRounds": MAX_ROUNDS,
-                "roundDurationSeconds": ROUND_DURATION_SECONDS,
+                "roundDurationSeconds": room.round_duration_seconds,
+                "roundDurationOptions": ROUND_DURATION_OPTIONS,
             }
-            return state
 
     def _round_snapshot(self, room: Room, current_round: RoundState | None, viewer_id: str) -> dict[str, Any] | None:
         if not current_round:
             return None
+        review = None
+        if room.phase in {"review", "finished"}:
+            category = room.selected_categories[current_round.review_category_index]
+            review = {
+                "categoryIndex": current_round.review_category_index,
+                "categoryCount": len(room.selected_categories),
+                "currentCategory": category,
+                "entries": self._review_entries(room, current_round, category),
+            }
         return {
             "roundNumber": current_round.round_number,
             "letter": current_round.letter,
             "startedAt": current_round.started_at,
             "endsAt": current_round.ends_at,
             "myAnswers": deepcopy(current_round.answers.get(viewer_id, {})),
-            "submittedPlayers": list(current_round.submitted_at.keys()),
-            "reviewScores": self._review_payload(room, current_round),
+            "review": review,
         }
 
-    def _review_payload(self, room: Room, current_round: RoundState) -> list[dict[str, Any]] | None:
-        if room.phase not in {"review", "finished"}:
-            return None
-        payload = []
+    def _review_entries(self, room: Room, current_round: RoundState, category: str) -> list[dict[str, Any]]:
+        entries = []
         for player_id, score_data in current_round.review_scores.items():
-            likes = current_round.likes.get(player_id, {})
-            payload.append(
+            likes = current_round.likes.get(player_id, {}).get(category, [])
+            checks = current_round.verification[player_id][category]
+            entries.append(
                 {
                     "playerId": player_id,
                     "playerName": room.players[player_id].name,
-                    "categories": [
-                        {
-                            "category": category,
-                            "answer": score_data["answers"].get(category, ""),
-                            "basePoints": score_data["base_points"].get(category, 0),
-                            "likes": len(likes.get(category, [])),
-                            "likedByMe": False,
-                            "likedBy": likes.get(category, []),
-                            "valid": score_data["validity"].get(category, False),
-                        }
-                        for category in room.selected_categories
-                    ],
-                    "roundPoints": score_data["round_points"] + sum(len(v) for v in likes.values()),
+                    "answer": score_data["answers"].get(category, ""),
+                    "basePoints": score_data["base_points"].get(category, 0),
+                    "likes": len(likes),
+                    "likedBy": likes,
+                    "checks": deepcopy(checks),
+                    "approved": self._is_answer_approved(checks),
+                    "roundPoints": score_data["round_points"],
                 }
             )
-        return payload
+        return entries
 
     def _seed_suggestions(self, room: Room, refill: bool = False) -> None:
         existing = {normalize_hebrew(item["name"]) for item in room.proposed_categories}
@@ -356,7 +385,7 @@ class GameStore:
                 round_number=len(room.rounds) + 1,
                 letter=letter,
                 started_at=started_at,
-                ends_at=started_at + ROUND_DURATION_SECONDS,
+                ends_at=started_at + room.round_duration_seconds,
             )
         )
 
@@ -368,49 +397,81 @@ class GameStore:
         if room.phase != "playing" or not room.rounds:
             return
         current = room.rounds[-1]
-        everyone_submitted = len(current.submitted_at) == len(room.players)
-        if not everyone_submitted and now_ts() < current.ends_at:
+        if now_ts() < current.ends_at:
             return
-        self._score_round_locked(room, current)
+        self._prepare_review_locked(room, current)
         room.phase = "review"
+        self._recompute_totals_locked(room)
 
-    def _score_round_locked(self, room: Room, current: RoundState) -> None:
+    def _prepare_review_locked(self, room: Room, current: RoundState) -> None:
         for player_id in room.players:
             current.answers.setdefault(player_id, {category: "" for category in room.selected_categories})
-        normalized_by_category: dict[str, dict[str, list[str]]] = {category: {} for category in room.selected_categories}
-        validity_by_player: dict[str, dict[str, bool]] = {}
-        for player_id, answers in current.answers.items():
-            validity_by_player[player_id] = {}
+            current.likes.setdefault(player_id, {})
+            current.verification.setdefault(player_id, {})
             for category in room.selected_categories:
-                answer = answers.get(category, "")
-                valid = answer_starts_with_letter(answer, current.letter)
-                validity_by_player[player_id][category] = valid
-                if not valid:
+                answer = current.answers[player_id].get(category, "").strip()
+                current.likes[player_id].setdefault(category, [])
+                if category in current.verification[player_id]:
                     continue
-                normalized = normalize_hebrew(answer)
+                starts_with_letter = answer_starts_with_letter(answer, current.letter)
+                current.verification[player_id][category] = {
+                    "starts_with_letter": starts_with_letter,
+                    "word_exists": False,
+                    "matches_category": False,
+                }
+        current.review_category_index = 0
+        self._recompute_round_scores_locked(room, current)
+
+    def _recompute_round_scores_locked(self, room: Room, current: RoundState) -> None:
+        normalized_by_category: dict[str, dict[str, list[str]]] = {category: {} for category in room.selected_categories}
+        for player_id, answers in current.answers.items():
+            for category in room.selected_categories:
+                checks = current.verification[player_id][category]
+                if not self._is_answer_approved(checks):
+                    continue
+                normalized = normalize_hebrew(answers.get(category, ""))
+                if not normalized:
+                    continue
                 normalized_by_category[category].setdefault(normalized, []).append(player_id)
         current.review_scores = {}
-        current.likes = {}
         for player_id, answers in current.answers.items():
             base_points: dict[str, int] = {}
             round_points = 0
             for category in room.selected_categories:
-                answer = answers.get(category, "")
-                if not validity_by_player[player_id][category]:
+                checks = current.verification[player_id][category]
+                if not self._is_answer_approved(checks):
                     base_points[category] = 0
                     continue
-                normalized = normalize_hebrew(answer)
+                normalized = normalize_hebrew(answers.get(category, ""))
                 duplicates = len(normalized_by_category[category].get(normalized, []))
                 points = 5 if duplicates > 1 else 10
                 base_points[category] = points
                 round_points += points
-            room.players[player_id].total_score += round_points
             current.review_scores[player_id] = {
                 "answers": deepcopy(answers),
                 "base_points": base_points,
-                "validity": validity_by_player[player_id],
                 "round_points": round_points,
             }
+
+    def _recompute_totals_locked(self, room: Room) -> None:
+        for participant in room.players.values():
+            participant.total_score = 0
+            participant.liked_received = 0
+        for game_round in room.rounds:
+            if game_round.review_scores:
+                for player_id, score_data in game_round.review_scores.items():
+                    room.players[player_id].total_score += score_data["round_points"]
+            for player_id, likes_by_category in game_round.likes.items():
+                like_count = sum(len(voters) for voters in likes_by_category.values())
+                room.players[player_id].total_score += like_count
+                room.players[player_id].liked_received += like_count
+
+    def _is_answer_approved(self, checks: dict[str, Any]) -> bool:
+        return (
+            checks.get("starts_with_letter", False)
+            and checks.get("word_exists", False)
+            and checks.get("matches_category", False)
+        )
 
     def _get_room(self, room_code: str) -> Room:
         code = (room_code or "").strip().upper()
@@ -430,6 +491,13 @@ class GameStore:
         for item in room.proposed_categories:
             if normalize_hebrew(item["name"]) == normalize_hebrew(label):
                 return item["name"]
+        raise ValueError("הקטגוריה לא קיימת")
+
+    def _find_selected_category(self, room: Room, category: str) -> str:
+        label = (category or "").strip()
+        for item in room.selected_categories:
+            if normalize_hebrew(item) == normalize_hebrew(label):
+                return item
         raise ValueError("הקטגוריה לא קיימת")
 
     def _validate_player_name(self, player_name: str) -> str:
@@ -469,6 +537,9 @@ class AppHandler(BaseHTTPRequestHandler):
         routes = {
             "/api/create-room": lambda: STORE.create_room(body.get("name", "")),
             "/api/join-room": lambda: STORE.join_room(body.get("roomCode", ""), body.get("name", "")),
+            "/api/set-round-duration": lambda: STORE.set_round_duration(
+                body.get("roomCode", ""), body.get("playerId", ""), int(body.get("seconds", 60))
+            ),
             "/api/propose-category": lambda: STORE.propose_category(
                 body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
             ),
@@ -480,7 +551,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
             ),
             "/api/start-game": lambda: STORE.start_game(body.get("roomCode", ""), body.get("playerId", "")),
-            "/api/submit-answers": lambda: STORE.submit_answers(
+            "/api/save-answers": lambda: STORE.save_answers(
                 body.get("roomCode", ""), body.get("playerId", ""), body.get("answers", {})
             ),
             "/api/toggle-like": lambda: STORE.toggle_like(
@@ -489,7 +560,14 @@ class AppHandler(BaseHTTPRequestHandler):
                 body.get("targetPlayerId", ""),
                 body.get("category", ""),
             ),
-            "/api/advance-round": lambda: STORE.advance_after_review(body.get("roomCode", ""), body.get("playerId", "")),
+            "/api/toggle-verification": lambda: STORE.toggle_verification(
+                body.get("roomCode", ""),
+                body.get("playerId", ""),
+                body.get("targetPlayerId", ""),
+                body.get("category", ""),
+                body.get("check", ""),
+            ),
+            "/api/advance-review": lambda: STORE.advance_review(body.get("roomCode", ""), body.get("playerId", "")),
         }
         handler = routes.get(parsed.path)
         if not handler:
