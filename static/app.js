@@ -75,7 +75,7 @@ function isHost() {
 }
 
 function roomReady() {
-  return !!(state.game && state.game.proposedCategories && state.game.proposedCategories.length === 4);
+  return !!(state.game && state.game.selectedCategories && state.game.selectedCategories.length === 4);
 }
 
 async function createRoom() {
@@ -207,6 +207,15 @@ async function removeCategory(category) {
   await refreshState();
 }
 
+async function toggleSelectedCategory(category) {
+  await api("/api/toggle-selected-category", {
+    roomCode: state.session.room_code,
+    playerId: state.session.player_id,
+    category,
+  });
+  await refreshState();
+}
+
 async function setFinishWindow(seconds) {
   await api("/api/set-finish-window", {
     roomCode: state.session.room_code,
@@ -270,8 +279,8 @@ async function flushAnswerSave() {
   paintStatusBar();
 }
 
-async function toggleApproval(targetPlayerId, category) {
-  await api("/api/toggle-approval", {
+async function toggleChallenge(targetPlayerId, category) {
+  await api("/api/toggle-challenge", {
     roomCode: state.session.room_code,
     playerId: state.session.player_id,
     targetPlayerId,
@@ -481,22 +490,31 @@ function renderSidebar() {
 
 function renderLobby() {
   const host = isHost();
+  const selectedSet = new Set(state.game.selectedCategories || []);
   const categoriesHtml = state.game.proposedCategories.map((item) => {
+    const isSelected = selectedSet.has(item.name);
+    const chooseButton = host
+      ? '<button type="button" data-select-category="' + escapeAttr(item.name) + '" class="' + (isSelected ? "" : "secondary") + '">' +
+        (isSelected ? "✅ נבחר למשחק" : "בחירה למשחק") +
+        "</button>"
+      : '<span class="pill">' + (isSelected ? "נבחר למשחק ✅" : "ממתין לבחירת המארח") + "</span>";
     const removeButton = host
       ? '<button type="button" data-remove-category="' + escapeAttr(item.name) + '" class="ghost">הסר קטגוריה</button>'
       : "";
     return (
-      '<article class="category-chip selected"><strong>' +
+      '<article class="category-chip ' + (isSelected ? "selected" : "") + '"><strong>' +
       escapeHtml(item.name) +
       "</strong><small>" +
       formatSource(item.source) +
+      (item.suggestedBy ? " • " + escapeHtml(item.suggestedBy) : "") +
       "</small>" +
+      chooseButton +
       removeButton +
       "</article>"
     );
   }).join("");
 
-  let hostControls = '<p class="helper">המארח מגדיר את הזמן ויכול לערוך את 4 הקטגוריות לפני תחילת המשחק.</p>';
+  let hostControls = '<p class="helper">כולם יכולים להציע קטגוריות. המארח בוחר אילו 4 ייכנסו למשחק.</p>';
   if (host) {
     const finishButtons = state.game.finishWindowOptions.map((seconds) => {
       const klass = state.game.finishWindowSeconds === seconds ? "" : "secondary";
@@ -514,20 +532,33 @@ function renderLobby() {
       escapeAttr(state.drafts.categoryProposal) +
       '" placeholder="לדוגמה: דברים באוטו" />' +
       "</label>" +
-      '<div class="toolbar"><button type="submit">➕ הוסף קטגוריה</button><span class="pill">כרגע ' +
+      '<div class="toolbar"><button type="submit">➕ הוסף הצעה</button><span class="pill">נבחרו ' +
+      state.game.selectedCategories.length +
+      '/4 קטגוריות</span><span class="pill">סה״כ הצעות: ' +
       state.game.proposedCategories.length +
-      "/4 קטגוריות</span></div></form>" +
-      '<div class="toolbar"><button id="reroll-categories" type="button" class="secondary">🎲 החלפת 4 הקטגוריות</button>' +
+      "</span></div></form>" +
+      '<div class="toolbar">' +
       '<button id="start-game" ' +
       (roomReady() ? "" : "disabled") +
       '>🚀 התחלת משחק</button></div>';
+  } else {
+    hostControls =
+      '<form id="category-form" class="stack">' +
+      '<label>הציעו קטגוריה למארח' +
+      '<input id="category-proposal" maxlength="36" value="' +
+      escapeAttr(state.drafts.categoryProposal) +
+      '" placeholder="לדוגמה: דברים באוטו" />' +
+      "</label>" +
+      '<div class="toolbar"><button type="submit">💡 שלח הצעה</button><span class="pill">נבחרו ' +
+      state.game.selectedCategories.length +
+      "/4 קטגוריות</span></div></form>";
   }
 
   return (
     '<section class="card stack">' +
-    '<div class="title-row"><div><h2>קטגוריות לפתיחה 🎯</h2><p class="status-copy">החדר נפתח עם 4 קטגוריות אקראיות. אפשר להסיר, להוסיף או לרענן אותן לפני שמתחילים.</p></div></div>' +
+    '<div class="title-row"><div><h2>קטגוריות לפתיחה 🎯</h2><p class="status-copy">החדר נפתח עם 4 קטגוריות אקראיות, ואפשר להוסיף הצעות חדשות. רק 4 קטגוריות מסומנות ייכנסו למשחק.</p></div></div>' +
     hostControls +
-    '<div class="pill">אלה הקטגוריות למשחק הזה</div>' +
+    '<div class="pill">המארח בוחר מתוך ההצעות את הקטגוריות למשחק</div>' +
     '<div class="category-grid">' +
     categoriesHtml +
     "</div></section>"
@@ -596,10 +627,10 @@ function renderReview() {
 
   const entriesHtml = review.entries.map((entry) => {
     const likedByMe = entry.likedBy.includes(state.session.player_id);
-    const canApprove = state.session.player_id !== entry.playerId && entry.answer && entry.startsWithLetter;
-    const approveButton =
-      state.game.phase === "review" && canApprove
-        ? '<button type="button" data-approval="' + escapeAttr(entry.playerId) + '" class="approve-button ' + (entry.approvedByMe ? "" : "secondary") + '">' + (entry.approvedByMe ? "✅ אישרתי" : "✅ אשר תשובה") + "</button>"
+    const canChallenge = state.session.player_id !== entry.playerId && entry.answer;
+    const challengeButton =
+      state.game.phase === "review" && canChallenge
+        ? '<button type="button" data-challenge="' + escapeAttr(entry.playerId) + '" class="approve-button ' + (entry.challengedByMe ? "" : "secondary") + '">' + (entry.challengedByMe ? "⚠️ ערערתי" : "⚠️ ערעור על תשובה") + "</button>"
         : "";
     const likePart =
       state.game.phase === "review" && entry.playerId !== state.session.player_id
@@ -619,16 +650,16 @@ function renderReview() {
       (entry.answer ? escapeHtml(entry.answer) : "<span class='muted'>אין תשובה</span>") +
       '</div><div class="toolbar">' +
       '<span class="pill ' + (entry.startsWithLetter ? "pill-success" : "pill-danger") + '">' + (entry.startsWithLetter ? "מתחיל באות ✅" : "לא מתחיל באות ❌") + "</span>" +
-      '<span class="pill">אישורים: ' +
-      entry.approvalCount +
+      '<span class="pill">ערעורים: ' +
+      entry.challengeCount +
       "/" +
-      entry.approvalsNeeded +
+      entry.challengeThreshold +
       "</span>" +
       '<span class="pill">' +
-      (entry.approved ? "מאושר לניקוד 🌟" : "ממתין לאישור") +
+      (entry.disqualified ? "נפסל בעקבות ערעורים ❌" : (entry.accepted ? "מקבל ניקוד 🌟" : "לא תקין לאות ❌")) +
       "</span></div>" +
       '<div class="toolbar">' +
-      approveButton +
+      challengeButton +
       likePart +
       "</div></article>"
     );
@@ -640,7 +671,7 @@ function renderReview() {
     state.game.round.roundNumber +
     ' הסתיים ✅</div><h2>בדיקת קטגוריה: ' +
     escapeHtml(review.currentCategory) +
-    ' 🔎</h2><p class="status-copy">כל המשתתפים צריכים לאשר תשובות. אישור עובד רק אם התשובה מתחילה באות הנכונה.</p></div>' +
+    ' 🔎</h2><p class="status-copy">כל התשובות מתקבלות כברירת מחדל. אם 50% או יותר מהמשתתפים מערערים, התשובה נפסלת.</p></div>' +
     '<div class="stack"><div class="pill">אות: ' +
     escapeHtml(state.game.round.letter) +
     '</div><div class="pill">קטגוריה ' +
@@ -696,11 +727,12 @@ function renderGame() {
     document.querySelectorAll("[data-finish-window]").forEach((button) => {
       button.addEventListener("click", withErrorHandling(() => setFinishWindow(Number(button.getAttribute("data-finish-window")))));
     });
+    document.querySelectorAll("[data-select-category]").forEach((button) => {
+      button.addEventListener("click", withErrorHandling(() => toggleSelectedCategory(button.getAttribute("data-select-category"))));
+    });
     document.querySelectorAll("[data-remove-category]").forEach((button) => {
       button.addEventListener("click", withErrorHandling(() => removeCategory(button.getAttribute("data-remove-category"))));
     });
-    const rerollButton = document.querySelector("#reroll-categories");
-    if (rerollButton) rerollButton.addEventListener("click", withErrorHandling(rerollCategories));
     const startButton = document.querySelector("#start-game");
     if (startButton) startButton.addEventListener("click", withErrorHandling(startGame));
   }
@@ -712,8 +744,8 @@ function renderGame() {
   }
 
   if (state.game.phase === "review" || state.game.phase === "finished") {
-    document.querySelectorAll("[data-approval]").forEach((button) => {
-      button.addEventListener("click", withErrorHandling(() => toggleApproval(button.getAttribute("data-approval"), state.game.round.review.currentCategory)));
+    document.querySelectorAll("[data-challenge]").forEach((button) => {
+      button.addEventListener("click", withErrorHandling(() => toggleChallenge(button.getAttribute("data-challenge"), state.game.round.review.currentCategory)));
     });
     document.querySelectorAll("[data-like]").forEach((button) => {
       button.addEventListener("click", withErrorHandling(() => toggleLike(button.getAttribute("data-like"), state.game.round.review.currentCategory)));
