@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-
 BASE_DIR = Path(__file__).parent
 STATIC_DIR = BASE_DIR / "static"
 
