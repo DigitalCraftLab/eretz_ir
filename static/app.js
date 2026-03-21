@@ -17,6 +17,7 @@ const state = {
   renderSnapshot: null,
 };
 
+
 const app = document.querySelector("#app");
 
 hydrateRoomCodeFromUrl();
