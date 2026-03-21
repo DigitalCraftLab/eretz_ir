@@ -103,6 +103,7 @@ class Room:
     phase: str = "lobby"
     selected_categories: list[str] = field(default_factory=list)
     proposed_categories: list[dict[str, Any]] = field(default_factory=list)
+    category_votes: dict[str, list[str]] = field(default_factory=dict)
     rounds: list[RoundState] = field(default_factory=list)
     finished_at: float | None = None
 
@@ -146,12 +147,24 @@ class GameStore:
             if any(normalize_hebrew(item["name"]) == normalize_hebrew(label) for item in room.proposed_categories):
                 return
             room.proposed_categories.append({"name": label, "source": "player"})
+            room.category_votes[label] = []
 
     def add_random_suggestions(self, room_code: str, player_id: str) -> None:
         with self.lock:
             room = self._get_room(room_code)
             self._get_player(room, player_id)
             self._seed_suggestions(room, refill=True)
+
+    def toggle_category_vote(self, room_code: str, player_id: str, category: str) -> None:
+        with self.lock:
+            room = self._get_room(room_code)
+            self._get_player(room, player_id)
+            category_name = self._find_category_name(room, category)
+            voters = room.category_votes.setdefault(category_name, [])
+            if player_id in voters:
+                voters.remove(player_id)
+            else:
+                voters.append(player_id)
 
     def toggle_category(self, room_code: str, player_id: str, category: str) -> None:
         with self.lock:
@@ -261,7 +274,14 @@ class GameStore:
                 "playerId": player.id,
                 "playerName": player.name,
                 "selectedCategories": room.selected_categories,
-                "proposedCategories": room.proposed_categories,
+                "proposedCategories": [
+                    {
+                        **item,
+                        "voteCount": len(room.category_votes.get(item["name"], [])),
+                        "votedByMe": player.id in room.category_votes.get(item["name"], []),
+                    }
+                    for item in room.proposed_categories
+                ],
                 "players": [
                     {
                         "id": item.id,
@@ -324,6 +344,7 @@ class GameStore:
         desired = 8 if refill else 6
         for name in candidates[:desired]:
             room.proposed_categories.append({"name": name, "source": "random"})
+            room.category_votes.setdefault(name, [])
 
     def _start_next_round_locked(self, room: Room) -> None:
         used_letters = {entry.letter for entry in room.rounds}
@@ -404,6 +425,13 @@ class GameStore:
             raise ValueError("השחקן לא נמצא")
         return player
 
+    def _find_category_name(self, room: Room, category: str) -> str:
+        label = (category or "").strip()
+        for item in room.proposed_categories:
+            if normalize_hebrew(item["name"]) == normalize_hebrew(label):
+                return item["name"]
+        raise ValueError("הקטגוריה לא קיימת")
+
     def _validate_player_name(self, player_name: str) -> str:
         cleaned = (player_name or "").strip()
         if not cleaned:
@@ -445,6 +473,9 @@ class AppHandler(BaseHTTPRequestHandler):
                 body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
             ),
             "/api/add-random-categories": lambda: STORE.add_random_suggestions(body.get("roomCode", ""), body.get("playerId", "")),
+            "/api/toggle-category-vote": lambda: STORE.toggle_category_vote(
+                body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
+            ),
             "/api/toggle-category": lambda: STORE.toggle_category(
                 body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
             ),
