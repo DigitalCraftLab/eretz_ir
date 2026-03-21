@@ -19,7 +19,7 @@ BASE_DIR = Path(__file__).parent
 STATIC_DIR = BASE_DIR / "static"
 
 HEBREW_LETTERS = list("אבגדהוזחטיכלמנסעפצקרשת")
-ROUND_DURATION_OPTIONS = [60, 90, 180]
+FINISH_WINDOW_OPTIONS = [10, 20, 40]
 MAX_ROUNDS = 4
 ROOM_SIZE_LIMIT = 6
 CATEGORY_COUNT = 4
@@ -48,15 +48,7 @@ def normalize_hebrew(text: str) -> str:
     normalized = (text or "").strip().lower()
     normalized = normalized.replace("-", " ").replace("_", " ")
     normalized = re.sub(r"\s+", " ", normalized)
-    replacements = str.maketrans(
-        {
-            "ך": "כ",
-            "ם": "מ",
-            "ן": "נ",
-            "ף": "פ",
-            "ץ": "צ",
-        }
-    )
+    replacements = str.maketrans({"ך": "כ", "ם": "מ", "ן": "נ", "ף": "פ", "ץ": "צ"})
     normalized = normalized.translate(replacements)
     normalized = re.sub(r"[^a-z\u0590-\u05ff0-9 ]", "", normalized)
     return normalized
@@ -87,9 +79,11 @@ class RoundState:
     round_number: int
     letter: str
     started_at: float
-    ends_at: float
+    countdown_started_at: float | None = None
+    ends_at: float | None = None
+    triggered_by: str | None = None
     answers: dict[str, dict[str, str]] = field(default_factory=dict)
-    verification: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    approvals: dict[str, dict[str, list[str]]] = field(default_factory=dict)
     review_scores: dict[str, dict[str, Any]] = field(default_factory=dict)
     likes: dict[str, dict[str, list[str]]] = field(default_factory=dict)
     review_category_index: int = 0
@@ -106,7 +100,7 @@ class Room:
     proposed_categories: list[dict[str, Any]] = field(default_factory=list)
     category_votes: dict[str, list[str]] = field(default_factory=dict)
     rounds: list[RoundState] = field(default_factory=list)
-    round_duration_seconds: int = 60
+    finish_window_seconds: int = 20
     finished_at: float | None = None
 
 
@@ -139,16 +133,16 @@ class GameStore:
             room.players[player.id] = player
             return {"room_code": room.code, "player_id": player.id}
 
-    def set_round_duration(self, room_code: str, player_id: str, seconds: int) -> None:
+    def set_finish_window(self, room_code: str, player_id: str, seconds: int) -> None:
         with self.lock:
             room = self._get_room(room_code)
             if player_id != room.host_id:
-                raise ValueError("רק המארח יכול לשנות את זמן המשחק")
+                raise ValueError("רק המארח יכול לשנות את הזמן")
             if room.phase != "lobby":
                 raise ValueError("אפשר לשנות זמן רק בלובי")
-            if seconds not in ROUND_DURATION_OPTIONS:
+            if seconds not in FINISH_WINDOW_OPTIONS:
                 raise ValueError("זמן לא תקין")
-            room.round_duration_seconds = seconds
+            room.finish_window_seconds = seconds
 
     def propose_category(self, room_code: str, player_id: str, category: str) -> None:
         with self.lock:
@@ -226,6 +220,33 @@ class GameStore:
             current.answers[player.id] = {
                 category: (answers.get(category, "") or "").strip() for category in room.selected_categories
             }
+            if current.countdown_started_at is None and self._is_form_complete(room.selected_categories, current.answers[player.id]):
+                current.countdown_started_at = now_ts()
+                current.ends_at = current.countdown_started_at + room.finish_window_seconds
+                current.triggered_by = player.id
+
+    def toggle_approval(self, room_code: str, player_id: str, target_player_id: str, category: str) -> None:
+        with self.lock:
+            room = self._get_room(room_code)
+            self._get_player(room, player_id)
+            self._ensure_round_up_to_date(room)
+            if room.phase != "review":
+                raise ValueError("אפשר לאשר תשובות רק בזמן הבדיקה")
+            if target_player_id == player_id:
+                raise ValueError("אי אפשר לאשר את התשובה של עצמך")
+            current = room.rounds[-1]
+            if target_player_id not in current.approvals:
+                raise ValueError("שחקן לא נמצא")
+            category_name = self._find_selected_category(room, category)
+            if not current.answers[target_player_id].get(category_name, "").strip():
+                raise ValueError("אין תשובה לאשר")
+            approvals = current.approvals[target_player_id][category_name]
+            if player_id in approvals:
+                approvals.remove(player_id)
+            else:
+                approvals.append(player_id)
+            self._recompute_round_scores_locked(room, current)
+            self._recompute_totals_locked(room)
 
     def toggle_like(self, room_code: str, player_id: str, target_player_id: str, category: str) -> None:
         with self.lock:
@@ -246,27 +267,6 @@ class GameStore:
                 bucket.remove(player_id)
             else:
                 bucket.append(player_id)
-            self._recompute_totals_locked(room)
-
-    def toggle_verification(self, room_code: str, player_id: str, target_player_id: str, category: str, check: str) -> None:
-        with self.lock:
-            room = self._get_room(room_code)
-            if player_id != room.host_id:
-                raise ValueError("רק המארח יכול לאשר תשובות")
-            self._ensure_round_up_to_date(room)
-            if room.phase != "review":
-                raise ValueError("אפשר לאשר תשובות רק בזמן הבדיקה")
-            if check not in {"word_exists", "matches_category"}:
-                raise ValueError("בדיקה לא תקינה")
-            current = room.rounds[-1]
-            if target_player_id not in current.verification:
-                raise ValueError("שחקן לא נמצא")
-            category_name = self._find_selected_category(room, category)
-            checks = current.verification[target_player_id][category_name]
-            if not checks["starts_with_letter"] or not current.answers[target_player_id].get(category_name, "").strip():
-                raise ValueError("אי אפשר לאשר תשובה לא תקינה")
-            checks[check] = not bool(checks[check])
-            self._recompute_round_scores_locked(room, current)
             self._recompute_totals_locked(room)
 
     def advance_review(self, room_code: str, player_id: str) -> None:
@@ -295,6 +295,7 @@ class GameStore:
             self._ensure_round_up_to_date(room)
             current_round = room.rounds[-1] if room.rounds else None
             players = sorted(room.players.values(), key=lambda item: (-item.total_score, item.joined_at))
+            winner = players[0] if room.phase == "finished" and players else None
             return {
                 "roomCode": room.code,
                 "phase": room.phase,
@@ -319,10 +320,17 @@ class GameStore:
                     }
                     for item in players
                 ],
+                "winner": {
+                    "id": winner.id,
+                    "name": winner.name,
+                    "score": winner.total_score,
+                }
+                if winner
+                else None,
                 "round": self._round_snapshot(room, current_round, player.id),
                 "maxRounds": MAX_ROUNDS,
-                "roundDurationSeconds": room.round_duration_seconds,
-                "roundDurationOptions": ROUND_DURATION_OPTIONS,
+                "finishWindowSeconds": room.finish_window_seconds,
+                "finishWindowOptions": FINISH_WINDOW_OPTIONS,
             }
 
     def _round_snapshot(self, room: Room, current_round: RoundState | None, viewer_id: str) -> dict[str, Any] | None:
@@ -335,33 +343,40 @@ class GameStore:
                 "categoryIndex": current_round.review_category_index,
                 "categoryCount": len(room.selected_categories),
                 "currentCategory": category,
-                "entries": self._review_entries(room, current_round, category),
+                "entries": self._review_entries(room, current_round, category, viewer_id),
             }
         return {
             "roundNumber": current_round.round_number,
             "letter": current_round.letter,
             "startedAt": current_round.started_at,
+            "countdownStartedAt": current_round.countdown_started_at,
             "endsAt": current_round.ends_at,
+            "triggeredByName": room.players[current_round.triggered_by].name if current_round.triggered_by else None,
             "myAnswers": deepcopy(current_round.answers.get(viewer_id, {})),
             "review": review,
         }
 
-    def _review_entries(self, room: Room, current_round: RoundState, category: str) -> list[dict[str, Any]]:
+    def _review_entries(self, room: Room, current_round: RoundState, category: str, viewer_id: str) -> list[dict[str, Any]]:
         entries = []
+        approvals_needed = max(0, len(room.players) - 1)
         for player_id, score_data in current_round.review_scores.items():
+            approvals = current_round.approvals.get(player_id, {}).get(category, [])
             likes = current_round.likes.get(player_id, {}).get(category, [])
-            checks = current_round.verification[player_id][category]
+            starts_with_letter = answer_starts_with_letter(score_data["answers"].get(category, ""), current_round.letter)
             entries.append(
                 {
                     "playerId": player_id,
                     "playerName": room.players[player_id].name,
                     "answer": score_data["answers"].get(category, ""),
                     "basePoints": score_data["base_points"].get(category, 0),
+                    "roundPoints": score_data["round_points"],
+                    "startsWithLetter": starts_with_letter,
+                    "approvalsNeeded": approvals_needed,
+                    "approvalCount": len(approvals),
+                    "approvedByMe": viewer_id in approvals,
+                    "approved": self._is_answer_approved(room, current_round, player_id, category),
                     "likes": len(likes),
                     "likedBy": likes,
-                    "checks": deepcopy(checks),
-                    "approved": self._is_answer_approved(checks),
-                    "roundPoints": score_data["round_points"],
                 }
             )
         return entries
@@ -379,13 +394,11 @@ class GameStore:
         used_letters = {entry.letter for entry in room.rounds}
         available_letters = [letter for letter in HEBREW_LETTERS if letter not in used_letters] or HEBREW_LETTERS[:]
         letter = random.choice(available_letters)
-        started_at = now_ts()
         room.rounds.append(
             RoundState(
                 round_number=len(room.rounds) + 1,
                 letter=letter,
-                started_at=started_at,
-                ends_at=started_at + room.round_duration_seconds,
+                started_at=now_ts(),
             )
         )
 
@@ -397,7 +410,7 @@ class GameStore:
         if room.phase != "playing" or not room.rounds:
             return
         current = room.rounds[-1]
-        if now_ts() < current.ends_at:
+        if current.ends_at is None or now_ts() < current.ends_at:
             return
         self._prepare_review_locked(room, current)
         room.phase = "review"
@@ -406,19 +419,11 @@ class GameStore:
     def _prepare_review_locked(self, room: Room, current: RoundState) -> None:
         for player_id in room.players:
             current.answers.setdefault(player_id, {category: "" for category in room.selected_categories})
+            current.approvals.setdefault(player_id, {})
             current.likes.setdefault(player_id, {})
-            current.verification.setdefault(player_id, {})
             for category in room.selected_categories:
-                answer = current.answers[player_id].get(category, "").strip()
+                current.approvals[player_id].setdefault(category, [])
                 current.likes[player_id].setdefault(category, [])
-                if category in current.verification[player_id]:
-                    continue
-                starts_with_letter = answer_starts_with_letter(answer, current.letter)
-                current.verification[player_id][category] = {
-                    "starts_with_letter": starts_with_letter,
-                    "word_exists": False,
-                    "matches_category": False,
-                }
         current.review_category_index = 0
         self._recompute_round_scores_locked(room, current)
 
@@ -426,20 +431,17 @@ class GameStore:
         normalized_by_category: dict[str, dict[str, list[str]]] = {category: {} for category in room.selected_categories}
         for player_id, answers in current.answers.items():
             for category in room.selected_categories:
-                checks = current.verification[player_id][category]
-                if not self._is_answer_approved(checks):
+                if not self._is_answer_approved(room, current, player_id, category):
                     continue
                 normalized = normalize_hebrew(answers.get(category, ""))
-                if not normalized:
-                    continue
-                normalized_by_category[category].setdefault(normalized, []).append(player_id)
+                if normalized:
+                    normalized_by_category[category].setdefault(normalized, []).append(player_id)
         current.review_scores = {}
         for player_id, answers in current.answers.items():
             base_points: dict[str, int] = {}
             round_points = 0
             for category in room.selected_categories:
-                checks = current.verification[player_id][category]
-                if not self._is_answer_approved(checks):
+                if not self._is_answer_approved(room, current, player_id, category):
                     base_points[category] = 0
                     continue
                 normalized = normalize_hebrew(answers.get(category, ""))
@@ -466,12 +468,16 @@ class GameStore:
                 room.players[player_id].total_score += like_count
                 room.players[player_id].liked_received += like_count
 
-    def _is_answer_approved(self, checks: dict[str, Any]) -> bool:
-        return (
-            checks.get("starts_with_letter", False)
-            and checks.get("word_exists", False)
-            and checks.get("matches_category", False)
-        )
+    def _is_answer_approved(self, room: Room, current: RoundState, player_id: str, category: str) -> bool:
+        answer = current.answers.get(player_id, {}).get(category, "").strip()
+        if not answer or not answer_starts_with_letter(answer, current.letter):
+            return False
+        approvals = current.approvals.get(player_id, {}).get(category, [])
+        approvals_needed = max(0, len(room.players) - 1)
+        return len(approvals) >= approvals_needed
+
+    def _is_form_complete(self, categories: list[str], answers: dict[str, str]) -> bool:
+        return all((answers.get(category, "") or "").strip() for category in categories)
 
     def _get_room(self, room_code: str) -> Room:
         code = (room_code or "").strip().upper()
@@ -537,8 +543,8 @@ class AppHandler(BaseHTTPRequestHandler):
         routes = {
             "/api/create-room": lambda: STORE.create_room(body.get("name", "")),
             "/api/join-room": lambda: STORE.join_room(body.get("roomCode", ""), body.get("name", "")),
-            "/api/set-round-duration": lambda: STORE.set_round_duration(
-                body.get("roomCode", ""), body.get("playerId", ""), int(body.get("seconds", 60))
+            "/api/set-finish-window": lambda: STORE.set_finish_window(
+                body.get("roomCode", ""), body.get("playerId", ""), int(body.get("seconds", 20))
             ),
             "/api/propose-category": lambda: STORE.propose_category(
                 body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
@@ -554,18 +560,17 @@ class AppHandler(BaseHTTPRequestHandler):
             "/api/save-answers": lambda: STORE.save_answers(
                 body.get("roomCode", ""), body.get("playerId", ""), body.get("answers", {})
             ),
-            "/api/toggle-like": lambda: STORE.toggle_like(
+            "/api/toggle-approval": lambda: STORE.toggle_approval(
                 body.get("roomCode", ""),
                 body.get("playerId", ""),
                 body.get("targetPlayerId", ""),
                 body.get("category", ""),
             ),
-            "/api/toggle-verification": lambda: STORE.toggle_verification(
+            "/api/toggle-like": lambda: STORE.toggle_like(
                 body.get("roomCode", ""),
                 body.get("playerId", ""),
                 body.get("targetPlayerId", ""),
                 body.get("category", ""),
-                body.get("check", ""),
             ),
             "/api/advance-review": lambda: STORE.advance_review(body.get("roomCode", ""), body.get("playerId", "")),
         }
