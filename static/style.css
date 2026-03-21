@@ -141,6 +141,13 @@ button.ghost {
   border: 1px solid rgba(167, 71, 36, 0.24);
 }
 
+button.approve-button {
+  padding: 16px 24px;
+  font-size: 1.05rem;
+  min-width: 180px;
+  box-shadow: 0 10px 18px rgba(207, 95, 52, 0.18);
+}
+
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -258,6 +265,19 @@ button:disabled {
   gap: 14px;
 }
 
+.countdown-live {
+  background:
+    radial-gradient(circle at top left, rgba(207, 95, 52, 0.24), transparent 38%),
+    radial-gradient(circle at bottom right, rgba(255, 195, 101, 0.22), transparent 36%),
+    rgba(255, 252, 245, 0.95);
+  border-color: rgba(207, 95, 52, 0.25);
+}
+
+.countdown-pill {
+  background: rgba(207, 95, 52, 0.14);
+  border-color: rgba(207, 95, 52, 0.24);
+}
+
 .timer {
   font-size: 1.1rem;
   font-weight: 700;
@@ -324,7 +344,16 @@ button:disabled {
   backdrop-filter: blur(4px);
   z-index: 20;
   pointer-events: none;
-  animation: fade-out 1.6s ease forwards;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.letter-reveal.visible {
+  opacity: 1;
+}
+
+.letter-reveal.hidden {
+  opacity: 0;
 }
 
 .letter-reveal-card {
