@@ -12,16 +12,26 @@ const state = {
     answers: {},
   },
   lastRoundKey: null,
+  renderSnapshot: null,
 };
 
 const app = document.querySelector("#app");
 const welcomeTemplate = document.querySelector("#welcome-template");
+hydrateRoomCodeFromUrl();
 
 function loadSession() {
   try {
     return JSON.parse(localStorage.getItem("eretz-ir-session") || "null");
   } catch {
     return null;
+  }
+}
+
+function hydrateRoomCodeFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const roomCode = params.get("room");
+  if (roomCode) {
+    state.drafts.roomCode = roomCode.toUpperCase();
   }
 }
 
@@ -156,6 +166,15 @@ async function addRandomCategories() {
   await refreshState();
 }
 
+async function toggleCategoryVote(category) {
+  await api("/api/toggle-category-vote", {
+    roomCode: state.session.room_code,
+    playerId: state.session.player_id,
+    category,
+  });
+  await refreshState();
+}
+
 async function toggleCategory(category) {
   await api("/api/toggle-category", {
     roomCode: state.session.room_code,
@@ -201,8 +220,60 @@ async function advanceRound() {
   await refreshState();
 }
 
+async function shareRoom() {
+  const shareUrl = new URL(window.location.href);
+  shareUrl.searchParams.set("room", state.game.roomCode);
+  const message = `בואו לשחק איתי ארץ עיר. קוד החדר: ${state.game.roomCode}\n${shareUrl.toString()}`;
+  if (navigator.share) {
+    await navigator.share({
+      title: "ארץ עיר",
+      text: `בואו לשחק איתי ארץ עיר. קוד החדר: ${state.game.roomCode}`,
+      url: shareUrl.toString(),
+    });
+    return;
+  }
+  await navigator.clipboard.writeText(message);
+  setError("קישור ההזמנה הועתק ללוח");
+}
+
 function formatSource(source) {
   return source === "random" ? "הצעה אקראית" : "הוצע על ידי שחקן";
+}
+
+function captureRenderSnapshot() {
+  const active = document.activeElement;
+  if (!active || active.tagName !== "INPUT") {
+    state.renderSnapshot = null;
+    return;
+  }
+  const selector = active.id
+    ? `#${active.id}`
+    : active.getAttribute("data-answer-category")
+      ? `[data-answer-category="${window.CSS?.escape(active.getAttribute("data-answer-category")) || active.getAttribute("data-answer-category")}"]`
+      : null;
+  if (!selector) {
+    state.renderSnapshot = null;
+    return;
+  }
+  state.renderSnapshot = {
+    selector,
+    selectionStart: active.selectionStart ?? 0,
+    selectionEnd: active.selectionEnd ?? 0,
+  };
+}
+
+function restoreRenderSnapshot() {
+  if (!state.renderSnapshot) return;
+  const input = document.querySelector(state.renderSnapshot.selector);
+  if (!input) {
+    state.renderSnapshot = null;
+    return;
+  }
+  input.focus();
+  if (typeof input.setSelectionRange === "function") {
+    input.setSelectionRange(state.renderSnapshot.selectionStart, state.renderSnapshot.selectionEnd);
+  }
+  state.renderSnapshot = null;
 }
 
 function syncDraftsWithGame() {
@@ -264,6 +335,9 @@ function renderSidebar() {
     <aside class="card stack">
       <div class="sidebar-section">
         <div class="pill">קוד חדר: <strong>${escapeHtml(state.game.roomCode)}</strong></div>
+        <div class="toolbar">
+          <button type="button" id="share-room" class="secondary">שיתוף חדר</button>
+        </div>
       </div>
       <div class="sidebar-section">
         <h3>שחקנים</h3>
@@ -307,7 +381,11 @@ function renderLobby() {
             <article class="category-chip ${state.game.selectedCategories.includes(item.name) ? "selected" : ""}">
               <strong>${escapeHtml(item.name)}</strong>
               <small>${formatSource(item.source)}</small>
-              ${isHost() ? `<button type="button" data-category-toggle="${escapeAttr(item.name)}" class="ghost">${state.game.selectedCategories.includes(item.name) ? "הסרה" : "בחירה"}</button>` : ""}
+              <div class="toolbar">
+                <span class="pill">נבחר על ידי ${item.voteCount} משתתפים</span>
+                <button type="button" data-category-vote="${escapeAttr(item.name)}" class="${item.votedByMe ? "" : "secondary"}">${item.votedByMe ? "בטל בחירה" : "אני רוצה את זה"}</button>
+                ${isHost() ? `<button type="button" data-category-toggle="${escapeAttr(item.name)}" class="ghost">${state.game.selectedCategories.includes(item.name) ? "הסרה" : "נעילה למשחק"}</button>` : ""}
+              </div>
             </article>
           `
           )
@@ -421,6 +499,7 @@ function renderFinished() {
 }
 
 function renderGame() {
+  captureRenderSnapshot();
   const main =
     state.game.phase === "lobby"
       ? renderLobby()
@@ -437,11 +516,20 @@ function renderGame() {
       <section class="stack">${main}</section>
     </div>
   `;
+  restoreRenderSnapshot();
+
+  document.querySelector("#share-room")?.addEventListener("click", withErrorHandling(shareRoom));
 
   if (state.game.phase === "lobby") {
     attachDraftInput("#category-form input", "categoryProposal");
     document.querySelector("#category-form")?.addEventListener("submit", withErrorHandling(proposeCategory));
     document.querySelector("#random-categories")?.addEventListener("click", withErrorHandling(addRandomCategories));
+    document.querySelectorAll("[data-category-vote]").forEach((button) => {
+      button.addEventListener(
+        "click",
+        withErrorHandling(() => toggleCategoryVote(button.getAttribute("data-category-vote")))
+      );
+    });
     document.querySelectorAll("[data-category-toggle]").forEach((button) => {
       button.addEventListener(
         "click",
