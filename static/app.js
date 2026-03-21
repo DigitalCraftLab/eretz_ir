@@ -1,691 +1,406 @@
-const state = {
-  session: loadSession(),
-  game: null,
-  error: "",
-  pollHandle: null,
-  timerHandle: null,
-  saveHandle: null,
-  remainingSeconds: 0,
-  saveStatus: "",
-  drafts: {
-    playerName: "",
-    roomCode: "",
-    categoryProposal: "",
-    answers: {},
-  },
-  lastRoundKey: null,
-  renderSnapshot: null,
-};
+:root {
+  --bg: #f5efe2;
+  --bg-soft: #fff9ef;
+  --card: rgba(255, 252, 245, 0.9);
+  --ink: #1f1a14;
+  --muted: #6d6254;
+  --line: rgba(78, 57, 33, 0.16);
+  --accent: #cf5f34;
+  --accent-strong: #a74724;
+  --accent-soft: #f4c79f;
+  --green: #366b43;
+  --shadow: 0 18px 40px rgba(74, 49, 23, 0.13);
+  --radius-xl: 28px;
+  --radius-md: 18px;
+}
 
-const app = document.querySelector("#app");
-const welcomeTemplate = document.querySelector("#welcome-template");
+* {
+  box-sizing: border-box;
+}
 
-hydrateRoomCodeFromUrl();
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
-function loadSession() {
-  try {
-    return JSON.parse(localStorage.getItem("eretz-ir-session") || "null");
-  } catch {
-    return null;
+body {
+  margin: 0;
+  font-family: "Arial Hebrew", "Noto Sans Hebrew", sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(207, 95, 52, 0.16), transparent 32%),
+    radial-gradient(circle at bottom right, rgba(54, 107, 67, 0.12), transparent 28%),
+    linear-gradient(180deg, #fffaf1 0%, var(--bg) 100%);
+  color: var(--ink);
+  min-height: 100vh;
+}
+
+.page-shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 28px 18px 48px;
+}
+
+.hero {
+  margin-bottom: 22px;
+  padding: 20px 4px;
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  color: var(--accent-strong);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+h1 {
+  font-size: clamp(3rem, 7vw, 5.5rem);
+  line-height: 0.95;
+  margin: 0 0 12px;
+}
+
+.hero-copy {
+  max-width: 720px;
+  font-size: 1.08rem;
+  color: var(--muted);
+  margin: 0;
+}
+
+.app-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 18px;
+  position: relative;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  padding: 22px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.form-card {
+  max-width: 560px;
+}
+
+label,
+.field-label {
+  display: grid;
+  gap: 8px;
+  font-weight: 700;
+}
+
+input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px 16px;
+  font-size: 1rem;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+button {
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: white;
+  padding: 12px 18px;
+  font-size: 0.96rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  background: var(--accent-strong);
+}
+
+button.secondary {
+  background: #ece2d2;
+  color: var(--ink);
+}
+
+button.ghost {
+  background: transparent;
+  color: var(--accent-strong);
+  border: 1px solid rgba(167, 71, 36, 0.24);
+}
+
+button.approve-button {
+  padding: 16px 24px;
+  font-size: 1.05rem;
+  min-width: 180px;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.button-row,
+.join-row,
+.toolbar,
+.title-row,
+.players-list,
+.review-card,
+.score-row,
+.category-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.join-row {
+  margin-top: 14px;
+}
+
+.helper,
+.muted,
+.status-copy {
+  color: var(--muted);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  font-size: 0.92rem;
+}
+
+.pill-success {
+  background: rgba(54, 107, 67, 0.14);
+  border-color: rgba(54, 107, 67, 0.24);
+}
+
+.pill-danger {
+  background: rgba(167, 71, 36, 0.12);
+  border-color: rgba(167, 71, 36, 0.2);
+}
+
+.letter-badge {
+  width: 92px;
+  height: 92px;
+  border-radius: 30px;
+  display: grid;
+  place-items: center;
+  font-size: 3rem;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--accent), #e9a057);
+  color: white;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.sidebar-section + .sidebar-section,
+.stack > * + * {
+  margin-top: 16px;
+}
+
+.players-list {
+  flex-direction: column;
+}
+
+.player-row,
+.category-chip,
+.review-item {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.player-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+}
+
+.player-row strong {
+  display: block;
+}
+
+.category-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.category-chip {
+  padding: 14px;
+}
+
+.category-chip.selected {
+  border-color: rgba(54, 107, 67, 0.45);
+  background: rgba(54, 107, 67, 0.1);
+}
+
+.category-chip small {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+}
+
+.answers-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.timer {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.review-list {
+  display: grid;
+  gap: 16px;
+}
+
+.review-card {
+  flex-direction: column;
+  align-items: stretch;
+  padding: 18px;
+}
+
+.review-item {
+  padding: 12px 14px;
+}
+
+.review-item.valid {
+  border-color: rgba(54, 107, 67, 0.25);
+}
+
+.review-item.invalid {
+  border-color: rgba(167, 71, 36, 0.3);
+}
+
+.review-answer {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.points {
+  font-weight: 800;
+  color: var(--green);
+}
+
+.winner-card {
+  text-align: center;
+  background:
+    radial-gradient(circle at top, rgba(255, 211, 120, 0.45), transparent 40%),
+    rgba(255, 252, 245, 0.95);
+}
+
+.winner-burst {
+  font-size: 2rem;
+  letter-spacing: 0.3rem;
+}
+
+.winner-score {
+  font-size: 2.4rem;
+  font-weight: 800;
+  margin: 0;
+  color: var(--accent-strong);
+}
+
+.letter-reveal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(31, 26, 20, 0.18);
+  backdrop-filter: blur(4px);
+  z-index: 20;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.letter-reveal.visible {
+  opacity: 1;
+}
+
+.letter-reveal.hidden {
+  opacity: 0;
+}
+
+.letter-reveal-card {
+  min-width: min(88vw, 420px);
+  text-align: center;
+  background: rgba(255, 250, 241, 0.96);
+  border: 1px solid rgba(207, 95, 52, 0.22);
+  border-radius: 34px;
+  padding: 28px 22px;
+  box-shadow: 0 24px 48px rgba(74, 49, 23, 0.2);
+  animation: pop-in 0.45s ease;
+}
+
+.letter-reveal-emoji {
+  font-size: 2rem;
+}
+
+.letter-reveal-letter {
+  font-size: clamp(4rem, 16vw, 7rem);
+  line-height: 1;
+  font-weight: 900;
+  color: var(--accent-strong);
+}
+
+.error-banner {
+  background: rgba(167, 71, 36, 0.12);
+  border: 1px solid rgba(167, 71, 36, 0.25);
+  color: #7d2e15;
+  border-radius: 16px;
+  padding: 12px 14px;
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.82) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
   }
 }
 
-function hydrateRoomCodeFromUrl() {
-  const params = new URLSearchParams(window.location.search);
-  const roomCode = params.get("room");
-  if (roomCode) {
-    state.drafts.roomCode = roomCode.toUpperCase();
+@keyframes fade-out {
+  0%,
+  72% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
   }
 }
 
-function saveSession(session) {
-  state.session = session;
-  localStorage.setItem("eretz-ir-session", JSON.stringify(session));
-}
-
-function clearSession() {
-  state.session = null;
-  localStorage.removeItem("eretz-ir-session");
-}
-
-async function api(path, payload, method = "POST") {
-  const options = { method, headers: {} };
-  if (method !== "GET") {
-    options.headers["Content-Type"] = "application/json";
-    options.body = JSON.stringify(payload || {});
-  }
-  const response = await fetch(path, options);
-  const data = await response.json();
-  if (!response.ok || data.error) {
-    throw new Error(data.error || "משהו השתבש");
-  }
-  return data.data;
-}
-
-function setError(message) {
-  state.error = message || "";
-  render();
-}
-
-function isHost() {
-  return state.game && state.session && state.game.hostId === state.session.player_id;
-}
-
-function roomReady() {
-  return state.game && state.game.selectedCategories.length === 4;
-}
-
-async function createRoom() {
-  const name = state.drafts.playerName.trim();
-  if (!name) {
-    setError("צריך להזין שם");
-    return;
-  }
-  const session = await api("/api/create-room", { name });
-  saveSession(session);
-  await refreshState();
-}
-
-async function joinRoom() {
-  const name = state.drafts.playerName.trim();
-  const roomCode = state.drafts.roomCode.trim().toUpperCase();
-  if (!name || !roomCode) {
-    setError("צריך להזין שם וקוד חדר");
-    return;
-  }
-  const session = await api("/api/join-room", { name, roomCode });
-  saveSession(session);
-  await refreshState();
-}
-
-async function refreshState() {
-  if (!state.session) {
-    state.game = null;
-    return;
-  }
-  try {
-    state.game = await api(
-      `/api/state?room_code=${encodeURIComponent(state.session.room_code)}&player_id=${encodeURIComponent(state.session.player_id)}`,
-      null,
-      "GET"
-    );
-    state.error = "";
-    syncDraftsWithGame();
-    syncTimer();
-  } catch (error) {
-    clearSession();
-    state.game = null;
-    state.error = error.message;
-    state.lastRoundKey = null;
-    state.drafts.answers = {};
-  }
-  render();
-}
-
-function startPolling() {
-  clearInterval(state.pollHandle);
-  state.pollHandle = setInterval(refreshState, 1000);
-}
-
-function syncTimer() {
-  clearInterval(state.timerHandle);
-  if (!state.game?.round || state.game.phase !== "playing") {
-    state.remainingSeconds = 0;
-    paintStatusBar();
-    return;
-  }
-  const tick = () => {
-    const endsAt = state.game.round.endsAt;
-    state.remainingSeconds = endsAt ? Math.max(0, Math.ceil(endsAt - Date.now() / 1000)) : 0;
-    if (state.remainingSeconds <= 1 && state.saveHandle) {
-      flushAnswerSave();
-    }
-    paintStatusBar();
-  };
-  tick();
-  state.timerHandle = setInterval(tick, 250);
-}
-
-function paintStatusBar() {
-  const timer = document.querySelector("[data-timer]");
-  if (timer) {
-    timer.textContent = state.game?.round?.endsAt
-      ? `נשארו ${state.remainingSeconds} שניות`
-      : "הטיימר יתחיל כשמישהו יסיים את כל הטופס";
-  }
-  const saveState = document.querySelector("[data-save-status]");
-  if (saveState) {
-    saveState.textContent = state.saveStatus || "התשובות נשמרות אוטומטית";
-  }
-}
-
-async function rerollCategories() {
-  await api("/api/reroll-categories", {
-    roomCode: state.session.room_code,
-    playerId: state.session.player_id,
-  });
-  await refreshState();
-}
-
-async function setFinishWindow(seconds) {
-  await api("/api/set-finish-window", {
-    roomCode: state.session.room_code,
-    playerId: state.session.player_id,
-    seconds,
-  });
-  await refreshState();
-}
-
-async function terminateGame() {
-  await api("/api/terminate-game", {
-    roomCode: state.session.room_code,
-    playerId: state.session.player_id,
-  });
-  await refreshState();
-}
-
-async function startGame() {
-  await api("/api/start-game", {
-    roomCode: state.session.room_code,
-    playerId: state.session.player_id,
-  });
-  await refreshState();
-}
-
-function scheduleAnswerSave() {
-  if (!state.session || state.game?.phase !== "playing") return;
-  state.saveStatus = "שומר...";
-  paintStatusBar();
-  clearTimeout(state.saveHandle);
-  state.saveHandle = setTimeout(flushAnswerSave, 220);
-}
-
-async function flushAnswerSave() {
-  if (!state.session || state.game?.phase !== "playing") return;
-  clearTimeout(state.saveHandle);
-  state.saveHandle = null;
-  await api("/api/save-answers", {
-    roomCode: state.session.room_code,
-    playerId: state.session.player_id,
-    answers: state.drafts.answers,
-  });
-  state.saveStatus = "נשמר אוטומטית";
-  paintStatusBar();
-}
-
-async function toggleApproval(targetPlayerId, category) {
-  await api("/api/toggle-approval", {
-    roomCode: state.session.room_code,
-    playerId: state.session.player_id,
-    targetPlayerId,
-    category,
-  });
-  await refreshState();
-}
-
-async function toggleLike(targetPlayerId, category) {
-  await api("/api/toggle-like", {
-    roomCode: state.session.room_code,
-    playerId: state.session.player_id,
-    targetPlayerId,
-    category,
-  });
-  await refreshState();
-}
-
-async function advanceReview() {
-  await api("/api/advance-review", {
-    roomCode: state.session.room_code,
-    playerId: state.session.player_id,
-  });
-  await refreshState();
-}
-
-async function shareRoom() {
-  const shareUrl = new URL(window.location.href);
-  shareUrl.searchParams.set("room", state.game.roomCode);
-  const message = `בואו לשחק איתי ארץ עיר 🎉 קוד החדר: ${state.game.roomCode}\n${shareUrl.toString()}`;
-  if (navigator.share) {
-    await navigator.share({
-      title: "ארץ עיר",
-      text: `בואו לשחק איתי ארץ עיר 🎉 קוד החדר: ${state.game.roomCode}`,
-      url: shareUrl.toString(),
-    });
-    return;
-  }
-  await navigator.clipboard.writeText(message);
-  state.saveStatus = "קישור ההזמנה הועתק 📋";
-  paintStatusBar();
-}
-
-function formatSource(source) {
-  return source === "random" ? "הצעה אקראית" : "הוצע על ידי שחקן";
-}
-
-function formatFinishWindow(seconds) {
-  return `${seconds} שניות`;
-}
-
-function syncDraftsWithGame() {
-  if (state.game?.phase !== "playing" || !state.game.round) {
-    state.lastRoundKey = null;
-    state.drafts.answers = {};
-    return;
-  }
-  const currentRoundKey = `${state.game.roomCode}:${state.game.round.roundNumber}`;
-  if (state.lastRoundKey !== currentRoundKey) {
-    state.lastRoundKey = currentRoundKey;
-    state.drafts.answers = { ...(state.game.round.myAnswers || {}) };
-    state.saveStatus = "התשובות נשמרות אוטומטית";
-    showLetterReveal(state.game.round.letter, currentRoundKey);
-  }
-}
-
-function showLetterReveal(letter, roundKey) {
-  let overlay = document.querySelector("#letter-reveal-overlay");
-  if (!overlay) {
-    overlay = document.createElement("div");
-    overlay.id = "letter-reveal-overlay";
-    overlay.className = "letter-reveal hidden";
-    document.body.appendChild(overlay);
-  }
-  overlay.innerHTML = `
-    <div class="letter-reveal-card" data-round-key="${escapeAttr(roundKey)}">
-      <div class="letter-reveal-emoji">✨</div>
-      <p>האות שנבחרה היא</p>
-      <div class="letter-reveal-letter">${escapeHtml(letter)}</div>
-    </div>
-  `;
-  overlay.classList.remove("hidden");
-  overlay.classList.add("visible");
-  window.clearTimeout(showLetterReveal.timeoutId);
-  showLetterReveal.timeoutId = window.setTimeout(() => {
-    overlay.classList.remove("visible");
-    overlay.classList.add("hidden");
-  }, 1500);
-}
-
-function attachDraftInput(selector, key, transform = (value) => value) {
-  const input = document.querySelector(selector);
-  if (!input) return;
-  input.addEventListener("input", (event) => {
-    state.drafts[key] = transform(event.currentTarget.value);
-  });
-}
-
-function attachAnswerDraftInputs() {
-  document.querySelectorAll("[data-answer-category]").forEach((input) => {
-    input.addEventListener("input", (event) => {
-      const category = event.currentTarget.getAttribute("data-answer-category");
-      state.drafts.answers[category] = event.currentTarget.value;
-      scheduleAnswerSave();
-    });
-  });
-}
-
-function captureRenderSnapshot() {
-  const active = document.activeElement;
-  if (!active || active.tagName !== "INPUT") {
-    state.renderSnapshot = null;
-    return;
-  }
-  const answerCategory = active.getAttribute("data-answer-category");
-  let selector = null;
-  if (active.id) {
-    selector = `#${window.CSS?.escape(active.id) || active.id}`;
-  } else if (answerCategory) {
-    selector = `[data-answer-category="${window.CSS?.escape(answerCategory) || answerCategory}"]`;
-  }
-  if (!selector) {
-    state.renderSnapshot = null;
-    return;
-  }
-  state.renderSnapshot = {
-    selector,
-    selectionStart: active.selectionStart ?? 0,
-    selectionEnd: active.selectionEnd ?? 0,
-  };
-}
-
-function restoreRenderSnapshot() {
-  if (!state.renderSnapshot) return;
-  const input = document.querySelector(state.renderSnapshot.selector);
-  if (!input) {
-    state.renderSnapshot = null;
-    return;
-  }
-  input.focus();
-  if (typeof input.setSelectionRange === "function") {
-    input.setSelectionRange(state.renderSnapshot.selectionStart, state.renderSnapshot.selectionEnd);
-  }
-  state.renderSnapshot = null;
-}
-
-function renderWelcome() {
-  app.innerHTML = "";
-  app.appendChild(welcomeTemplate.content.cloneNode(true));
-  document.querySelector("#player-name").value = state.drafts.playerName;
-  document.querySelector("#room-code").value = state.drafts.roomCode;
-  attachDraftInput("#player-name", "playerName");
-  attachDraftInput("#room-code", "roomCode", (value) => value.toUpperCase());
-  document.querySelector("#create-room").addEventListener("click", withErrorHandling(createRoom));
-  document.querySelector("#join-room").addEventListener("click", withErrorHandling(joinRoom));
-}
-
-function renderSidebar() {
-  const players = state.game.players
-    .map(
-      (player) => `
-        <div class="player-row">
-          <div>
-            <strong>${escapeHtml(player.name)}</strong>
-            <span class="muted">${player.id === state.game.hostId ? "מארח" : "שחקן"}</span>
-          </div>
-          <div class="points">${player.totalScore}</div>
-        </div>
-      `
-    )
-    .join("");
-  return `
-    <aside class="card stack">
-      <div class="sidebar-section">
-        <div class="pill">קוד חדר: <strong>${escapeHtml(state.game.roomCode)}</strong> ✨</div>
-        <div class="toolbar">
-          <button type="button" id="share-room" class="secondary">📨 שיתוף חדר</button>
-          ${(state.game.phase === "playing" || state.game.phase === "review") && isHost() ? '<button type="button" id="terminate-game" class="ghost">🛑 סיום משחק</button>' : ""}
-        </div>
-      </div>
-      <div class="sidebar-section">
-        <h3>שחקנים 👥</h3>
-        <div class="players-list">${players}</div>
-      </div>
-      <div class="sidebar-section">
-        <h3>סגירת טיימר 🏁</h3>
-        <div class="pill">אחרי שהראשון מסיים: ${formatFinishWindow(state.game.finishWindowSeconds)}</div>
-      </div>
-      <div class="sidebar-section">
-        <h3>קטגוריות נעולות 🗂️</h3>
-        <div class="category-chip-row">
-          ${
-            state.game.selectedCategories.map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join("") ||
-            '<span class="muted">עדיין לא נבחרו 4 קטגוריות</span>'
-          }
-        </div>
-      </div>
-    </aside>
-  `;
-}
-
-function renderLobby() {
-  const canStart = isHost() && roomReady();
-  return `
-    <section class="card stack">
-      <div class="title-row">
-        <div>
-          <h2>קטגוריות לפתיחה 🎯</h2>
-          <p class="status-copy">בכל פתיחת חדר מופיעות 4 קטגוריות אקראיות חדשות. אם הן לא טובות, המארח יכול לרענן ולקבל סט חדש.</p>
-        </div>
-      </div>
-      ${
-        isHost()
-          ? `
-            <div class="stack">
-              <span class="field-label">כמה זמן יישאר לאחר שהראשון מסיים?</span>
-              <div class="toolbar">
-                ${state.game.finishWindowOptions
-                  .map(
-                    (seconds) => `
-                      <button type="button" data-finish-window="${seconds}" class="${state.game.finishWindowSeconds === seconds ? "" : "secondary"}">
-                        ${formatFinishWindow(seconds)}
-                      </button>
-                    `
-                  )
-                  .join("")}
-              </div>
-            </div>
-          `
-          : `<p class="helper">המארח הגדיר ${formatFinishWindow(state.game.finishWindowSeconds)} לשאר השחקנים אחרי שהראשון מסיים.</p>`
-      }
-      <div class="pill">אלה 4 הקטגוריות למשחק הזה</div>
-      <div class="category-grid">
-        ${state.game.proposedCategories
-          .map(
-            (item) => `
-            <article class="category-chip ${state.game.selectedCategories.includes(item.name) ? "selected" : ""}">
-              <strong>${escapeHtml(item.name)}</strong>
-              <small>${formatSource(item.source)}</small>
-            </article>
-          `
-          )
-          .join("")}
-      </div>
-      ${
-        isHost()
-          ? `
-            <div class="toolbar">
-              <button id="reroll-categories" type="button" class="secondary">🎲 החלפת 4 הקטגוריות</button>
-              <button id="start-game" ${canStart ? "" : "disabled"}>🚀 התחלת משחק</button>
-            </div>
-          `
-          : '<p class="helper">המארח יכול לרענן את הקטגוריות או להתחיל את המשחק.</p>'
-      }
-    </section>
-  `;
-}
-
-function renderPlaying() {
-  const round = state.game.round;
-  return `
-    <section class="card stack">
-      <div class="title-row">
-        <div>
-          <div class="pill">סבב ${round.roundNumber} מתוך ${state.game.maxRounds}</div>
-          <h2>ממלאים תשובות ✍️</h2>
-          <p class="status-copy">הטיימר לא רץ בהתחלה. הוא יתחיל רק כשמישהו יסיים את כל 4 התשובות, ואז לאחרים יישארו ${formatFinishWindow(state.game.finishWindowSeconds)}.</p>
-        </div>
-        <div class="stack">
-          <div class="letter-badge">${escapeHtml(round.letter)}</div>
-          <div class="timer" data-timer>הטיימר יתחיל כשמישהו יסיים את כל הטופס</div>
-          <div class="muted" data-save-status>${state.saveStatus || "התשובות נשמרות אוטומטית"}</div>
-        </div>
-      </div>
-      ${
-        round.triggeredByName
-          ? `<div class="pill">⏰ ${escapeHtml(round.triggeredByName)} השלים ראשון. הספירה לאחור התחילה.</div>`
-          : `<div class="pill">🧠 סיימו את כל הטופס כדי להפעיל את הטיימר לשאר המשתתפים.</div>`
-      }
-      <form class="answers-grid">
-        ${state.game.selectedCategories
-          .map(
-            (category) => `
-              <label>
-                ${escapeHtml(category)}
-                <input data-answer-category="${escapeAttr(category)}" value="${escapeAttr(state.drafts.answers[category] || "")}" placeholder="מילה שמתחילה ב-${escapeAttr(round.letter)}" />
-              </label>
-            `
-          )
-          .join("")}
-      </form>
-    </section>
-  `;
-}
-
-function renderReview() {
-  const review = state.game.round.review;
-  const hostActionLabel =
-    review.categoryIndex === review.categoryCount - 1
-      ? state.game.round.roundNumber === state.game.maxRounds
-        ? "🎉 סיום משחק"
-        : "➡️ לסבב הבא"
-      : "➡️ לקטגוריה הבאה";
-
-  return `
-    <section class="stack">
-      <div class="card stack">
-        <div class="title-row">
-          <div>
-            <div class="pill">סבב ${state.game.round.roundNumber} הסתיים ✅</div>
-            <h2>בדיקת קטגוריה: ${escapeHtml(review.currentCategory)} 🔎</h2>
-            <p class="status-copy">כל המשתתפים צריכים לאשר תשובות. אישור עובד רק אם התשובה מתחילה באות הנכונה.</p>
-          </div>
-          <div class="stack">
-            <div class="pill">אות: ${escapeHtml(state.game.round.letter)}</div>
-            <div class="pill">קטגוריה ${review.categoryIndex + 1} מתוך ${review.categoryCount}</div>
-          </div>
-        </div>
-        ${
-          state.game.phase === "review" && isHost()
-            ? `<button id="advance-review">${hostActionLabel}</button>`
-            : state.game.phase === "review"
-              ? `<p class="helper">ממתינים למארח שיעבור לקטגוריה הבאה.</p>`
-              : ""
-        }
-      </div>
-      <div class="review-list">
-        ${review.entries
-          .map((entry) => {
-            const likedByMe = entry.likedBy.includes(state.session.player_id);
-            const canApprove = state.session.player_id !== entry.playerId && entry.answer && entry.startsWithLetter;
-            return `
-              <article class="card review-card">
-                <div class="title-row">
-                  <div>
-                    <h3>${escapeHtml(entry.playerName)}</h3>
-                    <p class="muted">נקודות עד כה בסבב: ${entry.roundPoints}</p>
-                  </div>
-                  <div class="points">${entry.basePoints} נק'</div>
-                </div>
-                <div class="review-answer">${entry.answer ? escapeHtml(entry.answer) : "<span class='muted'>אין תשובה</span>"}</div>
-                <div class="toolbar">
-                  <span class="pill ${entry.startsWithLetter ? "pill-success" : "pill-danger"}">${entry.startsWithLetter ? "מתחיל באות ✅" : "לא מתחיל באות ❌"}</span>
-                  <span class="pill">אישורים: ${entry.approvalCount}/${entry.approvalsNeeded}</span>
-                  <span class="pill">${entry.approved ? "מאושר לניקוד 🌟" : "ממתין לאישור"}</span>
-                </div>
-                <div class="toolbar">
-                  ${
-                    state.game.phase === "review" && canApprove
-                      ? `<button type="button" data-approval="${escapeAttr(entry.playerId)}" class="approve-button ${entry.approvedByMe ? "" : "secondary"}">${entry.approvedByMe ? "✅ אישרתי" : "✅ אשר תשובה"}</button>`
-                      : ""
-                  }
-                  ${
-                    state.game.phase === "review" && entry.playerId !== state.session.player_id
-                      ? `<button type="button" data-like="${escapeAttr(entry.playerId)}" class="${likedByMe ? "" : "secondary"}">${likedByMe ? "הסר לייק" : "💖 לייק"}</button>`
-                      : `<span class="pill">לייקים: ${entry.likes}</span>`
-                  }
-                </div>
-              </article>
-            `;
-          })
-          .join("")}
-      </div>
-    </section>
-  `;
-}
-
-function renderFinished() {
-  const winner = state.game.winner;
-  return `
-    <section class="card winner-card stack">
-      <div class="winner-burst">🎉 🏆 🎉</div>
-      <div class="pill">המשחק נגמר</div>
-      <h2>${escapeHtml(winner.name)} ניצח בגדול!</h2>
-      <p class="winner-score">${winner.score} נקודות</p>
-      <p class="status-copy">מחיאות כפיים, זיקוקים ודקה של תהילה מקומית 🎊</p>
-      ${isHost() ? `<button id="restart-game">🔁 משחק חדש</button>` : ""}
-    </section>
-  `;
-}
-
-function renderGame() {
-  captureRenderSnapshot();
-  const showFinishedBanner = state.game.phase === "finished";
-  const main =
-    state.game.phase === "lobby"
-      ? renderLobby()
-      : state.game.phase === "playing"
-        ? renderPlaying()
-        : `${showFinishedBanner ? renderFinished() : ""}${renderReview()}`;
-
-  app.innerHTML = `
-    ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ""}
-    <div class="layout">
-      ${renderSidebar()}
-      <section class="stack">${main}</section>
-    </div>
-  `;
-  restoreRenderSnapshot();
-
-  document.querySelector("#share-room")?.addEventListener("click", withErrorHandling(shareRoom));
-
-  if (state.game.phase === "lobby") {
-    document.querySelectorAll("[data-finish-window]").forEach((button) => {
-      button.addEventListener(
-        "click",
-        withErrorHandling(() => setFinishWindow(Number(button.getAttribute("data-finish-window"))))
-      );
-    });
-    document.querySelector("#reroll-categories")?.addEventListener("click", withErrorHandling(rerollCategories));
-    document.querySelector("#start-game")?.addEventListener("click", withErrorHandling(startGame));
+@media (max-width: 920px) {
+  .layout {
+    grid-template-columns: 1fr;
   }
 
-  if (state.game.phase === "playing") {
-    attachAnswerDraftInputs();
-  }
-
-  if (state.game.phase === "review" || state.game.phase === "finished") {
-    document.querySelectorAll("[data-approval]").forEach((button) => {
-      button.addEventListener(
-        "click",
-        withErrorHandling(() => toggleApproval(button.getAttribute("data-approval"), state.game.round.review.currentCategory))
-      );
-    });
-    document.querySelectorAll("[data-like]").forEach((button) => {
-      button.addEventListener(
-        "click",
-        withErrorHandling(() => toggleLike(button.getAttribute("data-like"), state.game.round.review.currentCategory))
-      );
-    });
-    document.querySelector("#advance-review")?.addEventListener("click", withErrorHandling(advanceReview));
-    document.querySelector("#restart-game")?.addEventListener("click", withErrorHandling(startGame));
-  }
-
-  if (state.game.phase === "playing" || state.game.phase === "review") {
-    document.querySelector("#terminate-game")?.addEventListener("click", withErrorHandling(terminateGame));
+  .letter-badge {
+    width: 76px;
+    height: 76px;
+    font-size: 2.4rem;
   }
 }
-
-function render() {
-  if (!state.session || !state.game) {
-    renderWelcome();
-    if (state.error) {
-      app.insertAdjacentHTML("afterbegin", `<div class="error-banner">${escapeHtml(state.error)}</div>`);
-    }
-    return;
-  }
-  renderGame();
-}
-
-function withErrorHandling(fn) {
-  return async (event) => {
-    try {
-      await fn(event);
-    } catch (error) {
-      setError(error.message);
-    }
-  };
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
-
-function escapeAttr(value) {
-  return escapeHtml(value).replaceAll('"', "&quot;");
-}
-
-startPolling();
-refreshState();
-render();
