@@ -118,7 +118,7 @@ class GameStore:
             player = Player(id=uuid4().hex, name=cleaned_name, joined_at=now_ts())
             room = Room(code=code, host_id=player.id, created_at=now_ts(), players={player.id: player})
             self.rooms[code] = room
-            self._seed_suggestions(room)
+            self._reset_lobby_categories(room)
             return {"room_code": code, "player_id": player.id}
 
     def join_room(self, room_code: str, player_name: str) -> dict[str, str]:
@@ -144,53 +144,14 @@ class GameStore:
                 raise ValueError("זמן לא תקין")
             room.finish_window_seconds = seconds
 
-    def propose_category(self, room_code: str, player_id: str, category: str) -> None:
-        with self.lock:
-            room = self._get_room(room_code)
-            self._get_player(room, player_id)
-            label = category.strip()
-            if not label:
-                raise ValueError("צריך להזין קטגוריה")
-            if any(normalize_hebrew(item["name"]) == normalize_hebrew(label) for item in room.proposed_categories):
-                return
-            room.proposed_categories.append({"name": label, "source": "player"})
-            room.category_votes[label] = []
-
-    def add_random_suggestions(self, room_code: str, player_id: str) -> None:
-        with self.lock:
-            room = self._get_room(room_code)
-            self._get_player(room, player_id)
-            self._seed_suggestions(room, refill=True)
-
-    def toggle_category_vote(self, room_code: str, player_id: str, category: str) -> None:
-        with self.lock:
-            room = self._get_room(room_code)
-            self._get_player(room, player_id)
-            category_name = self._find_category_name(room, category)
-            voters = room.category_votes.setdefault(category_name, [])
-            if player_id in voters:
-                voters.remove(player_id)
-            else:
-                voters.append(player_id)
-
-    def toggle_category(self, room_code: str, player_id: str, category: str) -> None:
+    def reroll_categories(self, room_code: str, player_id: str) -> None:
         with self.lock:
             room = self._get_room(room_code)
             if player_id != room.host_id:
-                raise ValueError("רק המארח יכול לנעול קטגוריות")
-            label = self._find_category_name(room, category)
-            existing = next(
-                (item for item in room.selected_categories if normalize_hebrew(item) == normalize_hebrew(label)),
-                None,
-            )
-            if existing:
-                room.selected_categories = [
-                    item for item in room.selected_categories if normalize_hebrew(item) != normalize_hebrew(label)
-                ]
-                return
-            if len(room.selected_categories) >= CATEGORY_COUNT:
-                raise ValueError("אפשר לבחור בדיוק 4 קטגוריות")
-            room.selected_categories.append(label)
+                raise ValueError("רק המארח יכול לרענן קטגוריות")
+            if room.phase != "lobby":
+                raise ValueError("אפשר לרענן קטגוריות רק בלובי")
+            self._reset_lobby_categories(room)
 
     def start_game(self, room_code: str, player_id: str) -> None:
         with self.lock:
@@ -203,10 +164,22 @@ class GameStore:
                 raise ValueError("צריך לבחור 4 קטגוריות")
             if room.phase not in {"lobby", "finished"}:
                 raise ValueError("המשחק כבר התחיל")
+            room.selected_categories = [item["name"] for item in room.proposed_categories[:CATEGORY_COUNT]]
             room.rounds = []
             room.finished_at = None
             room.phase = "playing"
             self._start_next_round_locked(room)
+            self._recompute_totals_locked(room)
+
+    def terminate_game(self, room_code: str, player_id: str) -> None:
+        with self.lock:
+            room = self._get_room(room_code)
+            if player_id != room.host_id:
+                raise ValueError("רק המארח יכול לסיים את המשחק")
+            if room.phase == "lobby":
+                raise ValueError("אין משחק פעיל לסיים")
+            room.phase = "finished"
+            room.finished_at = now_ts()
             self._recompute_totals_locked(room)
 
     def save_answers(self, room_code: str, player_id: str, answers: dict[str, str]) -> None:
@@ -303,14 +276,7 @@ class GameStore:
                 "playerId": player.id,
                 "playerName": player.name,
                 "selectedCategories": room.selected_categories,
-                "proposedCategories": [
-                    {
-                        **item,
-                        "voteCount": len(room.category_votes.get(item["name"], [])),
-                        "votedByMe": player.id in room.category_votes.get(item["name"], []),
-                    }
-                    for item in room.proposed_categories
-                ],
+                "proposedCategories": [deepcopy(item) for item in room.proposed_categories],
                 "players": [
                     {
                         "id": item.id,
@@ -381,14 +347,13 @@ class GameStore:
             )
         return entries
 
-    def _seed_suggestions(self, room: Room, refill: bool = False) -> None:
-        existing = {normalize_hebrew(item["name"]) for item in room.proposed_categories}
-        candidates = [name for name in SUGGESTED_CATEGORIES if normalize_hebrew(name) not in existing]
+    def _reset_lobby_categories(self, room: Room) -> None:
+        candidates = SUGGESTED_CATEGORIES[:]
         random.shuffle(candidates)
-        desired = 8 if refill else 6
-        for name in candidates[:desired]:
-            room.proposed_categories.append({"name": name, "source": "random"})
-            room.category_votes.setdefault(name, [])
+        selected = candidates[:CATEGORY_COUNT]
+        room.proposed_categories = [{"name": name, "source": "random"} for name in selected]
+        room.category_votes = {name: [] for name in selected}
+        room.selected_categories = selected[:]
 
     def _start_next_round_locked(self, room: Room) -> None:
         used_letters = {entry.letter for entry in room.rounds}
@@ -492,13 +457,6 @@ class GameStore:
             raise ValueError("השחקן לא נמצא")
         return player
 
-    def _find_category_name(self, room: Room, category: str) -> str:
-        label = (category or "").strip()
-        for item in room.proposed_categories:
-            if normalize_hebrew(item["name"]) == normalize_hebrew(label):
-                return item["name"]
-        raise ValueError("הקטגוריה לא קיימת")
-
     def _find_selected_category(self, room: Room, category: str) -> str:
         label = (category or "").strip()
         for item in room.selected_categories:
@@ -546,17 +504,9 @@ class AppHandler(BaseHTTPRequestHandler):
             "/api/set-finish-window": lambda: STORE.set_finish_window(
                 body.get("roomCode", ""), body.get("playerId", ""), int(body.get("seconds", 20))
             ),
-            "/api/propose-category": lambda: STORE.propose_category(
-                body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
-            ),
-            "/api/add-random-categories": lambda: STORE.add_random_suggestions(body.get("roomCode", ""), body.get("playerId", "")),
-            "/api/toggle-category-vote": lambda: STORE.toggle_category_vote(
-                body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
-            ),
-            "/api/toggle-category": lambda: STORE.toggle_category(
-                body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
-            ),
+            "/api/reroll-categories": lambda: STORE.reroll_categories(body.get("roomCode", ""), body.get("playerId", "")),
             "/api/start-game": lambda: STORE.start_game(body.get("roomCode", ""), body.get("playerId", "")),
+            "/api/terminate-game": lambda: STORE.terminate_game(body.get("roomCode", ""), body.get("playerId", "")),
             "/api/save-answers": lambda: STORE.save_answers(
                 body.get("roomCode", ""), body.get("playerId", ""), body.get("answers", {})
             ),
