@@ -5,6 +5,13 @@ const state = {
   pollHandle: null,
   timerHandle: null,
   remainingSeconds: 0,
+  drafts: {
+    playerName: "",
+    roomCode: "",
+    categoryProposal: "",
+    answers: {},
+  },
+  lastRoundKey: null,
 };
 
 const app = document.querySelector("#app");
@@ -56,7 +63,7 @@ function roomReady() {
 }
 
 async function createRoom() {
-  const name = document.querySelector("#player-name")?.value?.trim();
+  const name = state.drafts.playerName.trim();
   if (!name) {
     setError("צריך להזין שם");
     return;
@@ -67,8 +74,8 @@ async function createRoom() {
 }
 
 async function joinRoom() {
-  const name = document.querySelector("#player-name")?.value?.trim();
-  const roomCode = document.querySelector("#room-code")?.value?.trim().toUpperCase();
+  const name = state.drafts.playerName.trim();
+  const roomCode = state.drafts.roomCode.trim().toUpperCase();
   if (!name || !roomCode) {
     setError("צריך להזין שם וקוד חדר");
     return;
@@ -81,7 +88,6 @@ async function joinRoom() {
 async function refreshState() {
   if (!state.session) {
     state.game = null;
-    render();
     return;
   }
   try {
@@ -91,11 +97,14 @@ async function refreshState() {
       "GET"
     );
     state.error = "";
+    syncDraftsWithGame();
     syncTimer();
   } catch (error) {
     clearSession();
     state.game = null;
     state.error = error.message;
+    state.lastRoundKey = null;
+    state.drafts.answers = {};
   }
   render();
 }
@@ -128,16 +137,14 @@ function paintTimerOnly() {
 
 async function proposeCategory(event) {
   event.preventDefault();
-  const form = event.currentTarget;
-  const input = form.querySelector("input");
-  const category = input.value.trim();
+  const category = state.drafts.categoryProposal.trim();
   if (!category) return;
   await api("/api/propose-category", {
     roomCode: state.session.room_code,
     playerId: state.session.player_id,
     category,
   });
-  input.value = "";
+  state.drafts.categoryProposal = "";
   await refreshState();
 }
 
@@ -168,14 +175,10 @@ async function startGame() {
 
 async function submitAnswers(event) {
   event.preventDefault();
-  const payload = {};
-  state.game.selectedCategories.forEach((category, index) => {
-    payload[category] = document.querySelector(`[data-answer-index="${index}"]`)?.value || "";
-  });
   await api("/api/submit-answers", {
     roomCode: state.session.room_code,
     playerId: state.session.player_id,
-    answers: payload,
+    answers: state.drafts.answers,
   });
   await refreshState();
 }
@@ -202,9 +205,43 @@ function formatSource(source) {
   return source === "random" ? "הצעה אקראית" : "הוצע על ידי שחקן";
 }
 
+function syncDraftsWithGame() {
+  if (state.game?.phase !== "playing" || !state.game.round) {
+    state.lastRoundKey = null;
+    state.drafts.answers = {};
+    return;
+  }
+  const currentRoundKey = `${state.game.roomCode}:${state.game.round.roundNumber}`;
+  if (state.lastRoundKey !== currentRoundKey) {
+    state.lastRoundKey = currentRoundKey;
+    state.drafts.answers = { ...(state.game.round.myAnswers || {}) };
+  }
+}
+
+function attachDraftInput(selector, key, transform = (value) => value) {
+  const input = document.querySelector(selector);
+  if (!input) return;
+  input.addEventListener("input", (event) => {
+    state.drafts[key] = transform(event.currentTarget.value);
+  });
+}
+
+function attachAnswerDraftInputs() {
+  document.querySelectorAll("[data-answer-category]").forEach((input) => {
+    input.addEventListener("input", (event) => {
+      const category = event.currentTarget.getAttribute("data-answer-category");
+      state.drafts.answers[category] = event.currentTarget.value;
+    });
+  });
+}
+
 function renderWelcome() {
   app.innerHTML = "";
   app.appendChild(welcomeTemplate.content.cloneNode(true));
+  document.querySelector("#player-name").value = state.drafts.playerName;
+  document.querySelector("#room-code").value = state.drafts.roomCode;
+  attachDraftInput("#player-name", "playerName");
+  attachDraftInput("#room-code", "roomCode", (value) => value.toUpperCase());
   document.querySelector("#create-room").addEventListener("click", withErrorHandling(createRoom));
   document.querySelector("#join-room").addEventListener("click", withErrorHandling(joinRoom));
 }
@@ -255,7 +292,7 @@ function renderLobby() {
       <form id="category-form" class="stack">
         <label>
           הצעת קטגוריה חדשה
-          <input maxlength="36" placeholder="לדוגמה: דברים שמוצאים במלון" />
+          <input maxlength="36" value="${escapeAttr(state.drafts.categoryProposal)}" placeholder="לדוגמה: דברים שמוצאים במלון" />
         </label>
         <div class="toolbar">
           <button type="submit">הוספת קטגוריה</button>
@@ -282,7 +319,6 @@ function renderLobby() {
 }
 
 function renderPlaying() {
-  const myAnswers = state.game.round?.myAnswers || {};
   const submitted = state.game.round.submittedPlayers.includes(state.session.player_id);
   return `
     <section class="card stack">
@@ -303,7 +339,7 @@ function renderPlaying() {
             (category, index) => `
               <label>
                 ${escapeHtml(category)}
-                <input data-answer-index="${index}" value="${escapeAttr(myAnswers[category] || "")}" placeholder="מילה שמתחילה ב-${escapeAttr(state.game.round.letter)}" />
+                <input data-answer-index="${index}" data-answer-category="${escapeAttr(category)}" value="${escapeAttr(state.drafts.answers[category] || "")}" placeholder="מילה שמתחילה ב-${escapeAttr(state.game.round.letter)}" />
               </label>
             `
           )
@@ -403,6 +439,7 @@ function renderGame() {
   `;
 
   if (state.game.phase === "lobby") {
+    attachDraftInput("#category-form input", "categoryProposal");
     document.querySelector("#category-form")?.addEventListener("submit", withErrorHandling(proposeCategory));
     document.querySelector("#random-categories")?.addEventListener("click", withErrorHandling(addRandomCategories));
     document.querySelectorAll("[data-category-toggle]").forEach((button) => {
@@ -415,6 +452,7 @@ function renderGame() {
   }
 
   if (state.game.phase === "playing") {
+    attachAnswerDraftInputs();
     document.querySelector("#answers-form")?.addEventListener("submit", withErrorHandling(submitAnswers));
   }
 
