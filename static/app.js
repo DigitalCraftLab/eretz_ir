@@ -18,8 +18,6 @@ const state = {
 };
 
 const app = document.querySelector("#app");
-const welcomeTemplate = document.querySelector("#welcome-template");
-
 hydrateRoomCodeFromUrl();
 
 function loadSession() {
@@ -390,8 +388,28 @@ function restoreRenderSnapshot() {
 }
 
 function renderWelcome() {
-  app.innerHTML = "";
-  app.appendChild(welcomeTemplate.content.cloneNode(true));
+  app.innerHTML = `
+    <section class="card form-card stack">
+      <div>
+        <h2>פתיחת חדר או הצטרפות</h2>
+        <p class="helper">
+          2 עד 6 משתתפים, כל אחד מהמכשיר שלו. החדר נפתח עם 4 קטגוריות אקראיות, והמארח
+          יכול לשנות אותן לפני שמתחילים.
+        </p>
+      </div>
+      <label for="player-name">
+        השם שלך
+        <input id="player-name" maxlength="24" placeholder="לדוגמה: יואב" autocomplete="nickname" />
+      </label>
+      <div class="button-row">
+        <button id="create-room" type="button">יצירת חדר חדש</button>
+      </div>
+      <div class="join-row">
+        <input id="room-code" maxlength="5" placeholder="קוד חדר" autocomplete="off" />
+        <button id="join-room" type="button" class="secondary">הצטרפות לחדר</button>
+      </div>
+    </section>
+  `;
   document.querySelector("#player-name").value = state.drafts.playerName;
   document.querySelector("#room-code").value = state.drafts.roomCode;
   attachDraftInput("#player-name", "playerName");
