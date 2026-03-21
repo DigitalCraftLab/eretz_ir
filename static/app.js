@@ -18,6 +18,7 @@ const state = {
 };
 
 const app = document.querySelector("#app");
+
 hydrateRoomCodeFromUrl();
 
 function loadSession() {
@@ -25,17 +26,6 @@ function loadSession() {
     return JSON.parse(localStorage.getItem("eretz-ir-session") || "null");
   } catch {
     return null;
-  }
-}
-
-function hydrateRoomCodeFromUrl() {
-  const params = new URLSearchParams(window.location.search);
-  const roomCode = params.get("room");
-  if (roomCode) {
-    state.drafts.roomCode = roomCode.toUpperCase();
-    if (state.session && state.session.room_code !== state.drafts.roomCode) {
-      clearSession();
-    }
   }
 }
 
@@ -47,6 +37,17 @@ function saveSession(session) {
 function clearSession() {
   state.session = null;
   localStorage.removeItem("eretz-ir-session");
+}
+
+function hydrateRoomCodeFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const roomCode = params.get("room");
+  if (roomCode) {
+    state.drafts.roomCode = roomCode.toUpperCase();
+    if (state.session && state.session.room_code !== state.drafts.roomCode) {
+      clearSession();
+    }
+  }
 }
 
 async function api(path, payload, method = "POST") {
@@ -73,7 +74,7 @@ function isHost() {
 }
 
 function roomReady() {
-  return state.game && state.game.selectedCategories.length === 4;
+  return state.game && state.game.proposedCategories.length === 4;
 }
 
 async function createRoom() {
@@ -102,6 +103,7 @@ async function joinRoom() {
 async function refreshState() {
   if (!state.session) {
     state.game = null;
+    render();
     return;
   }
   try {
@@ -202,16 +204,16 @@ async function setFinishWindow(seconds) {
   await refreshState();
 }
 
-async function terminateGame() {
-  await api("/api/terminate-game", {
+async function startGame() {
+  await api("/api/start-game", {
     roomCode: state.session.room_code,
     playerId: state.session.player_id,
   });
   await refreshState();
 }
 
-async function startGame() {
-  await api("/api/start-game", {
+async function terminateGame() {
+  await api("/api/terminate-game", {
     roomCode: state.session.room_code,
     playerId: state.session.player_id,
   });
@@ -285,7 +287,7 @@ async function shareRoom() {
 }
 
 function formatSource(source) {
-  return source === "random" ? "הצעה אקראית" : "הוצע על ידי שחקן";
+  return source === "random" ? "הצעה אקראית" : "הוצע ידנית";
 }
 
 function formatFinishWindow(seconds) {
@@ -298,16 +300,16 @@ function syncDraftsWithGame() {
     state.drafts.answers = {};
     return;
   }
-  const currentRoundKey = `${state.game.roomCode}:${state.game.round.roundNumber}`;
-  if (state.lastRoundKey !== currentRoundKey) {
-    state.lastRoundKey = currentRoundKey;
+  const roundKey = `${state.game.roomCode}:${state.game.round.roundNumber}`;
+  if (state.lastRoundKey !== roundKey) {
+    state.lastRoundKey = roundKey;
     state.drafts.answers = { ...(state.game.round.myAnswers || {}) };
     state.saveStatus = "התשובות נשמרות אוטומטית";
-    showLetterReveal(state.game.round.letter, currentRoundKey);
+    showLetterReveal(state.game.round.letter);
   }
 }
 
-function showLetterReveal(letter, roundKey) {
+function showLetterReveal(letter) {
   let overlay = document.querySelector("#letter-reveal-overlay");
   if (!overlay) {
     overlay = document.createElement("div");
@@ -316,7 +318,7 @@ function showLetterReveal(letter, roundKey) {
     document.body.appendChild(overlay);
   }
   overlay.innerHTML = `
-    <div class="letter-reveal-card" data-round-key="${escapeAttr(roundKey)}">
+    <div class="letter-reveal-card">
       <div class="letter-reveal-emoji">✨</div>
       <p>האות שנבחרה היא</p>
       <div class="letter-reveal-letter">${escapeHtml(letter)}</div>
@@ -324,8 +326,8 @@ function showLetterReveal(letter, roundKey) {
   `;
   overlay.classList.remove("hidden");
   overlay.classList.add("visible");
-  window.clearTimeout(showLetterReveal.timeoutId);
-  showLetterReveal.timeoutId = window.setTimeout(() => {
+  clearTimeout(showLetterReveal.timeoutId);
+  showLetterReveal.timeoutId = setTimeout(() => {
     overlay.classList.remove("visible");
     overlay.classList.add("hidden");
   }, 1500);
@@ -392,10 +394,7 @@ function renderWelcome() {
     <section class="card form-card stack">
       <div>
         <h2>פתיחת חדר או הצטרפות</h2>
-        <p class="helper">
-          2 עד 6 משתתפים, כל אחד מהמכשיר שלו. החדר נפתח עם 4 קטגוריות אקראיות, והמארח
-          יכול לשנות אותן לפני שמתחילים.
-        </p>
+        <p class="helper">מזינים שם, יוצרים חדר חדש או מצטרפים עם קוד.</p>
       </div>
       <label for="player-name">
         השם שלך
@@ -419,19 +418,16 @@ function renderWelcome() {
 }
 
 function renderSidebar() {
-  const players = state.game.players
-    .map(
-      (player) => `
-        <div class="player-row">
-          <div>
-            <strong>${escapeHtml(player.name)}</strong>
-            <span class="muted">${player.id === state.game.hostId ? "מארח" : "שחקן"}</span>
-          </div>
-          <div class="points">${player.totalScore}</div>
-        </div>
-      `
-    )
-    .join("");
+  const players = state.game.players.map((player) => `
+    <div class="player-row">
+      <div>
+        <strong>${escapeHtml(player.name)}</strong>
+        <span class="muted">${player.id === state.game.hostId ? "מארח" : "שחקן"}</span>
+      </div>
+      <div class="points">${player.totalScore}</div>
+    </div>
+  `).join("");
+
   return `
     <aside class="card stack">
       <div class="sidebar-section">
@@ -450,12 +446,9 @@ function renderSidebar() {
         <div class="pill">אחרי שהראשון מסיים: ${formatFinishWindow(state.game.finishWindowSeconds)}</div>
       </div>
       <div class="sidebar-section">
-        <h3>קטגוריות נעולות 🗂️</h3>
+        <h3>קטגוריות במשחק 🗂️</h3>
         <div class="category-chip-row">
-          ${
-            state.game.selectedCategories.map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join("") ||
-            '<span class="muted">עדיין לא נבחרו 4 קטגוריות</span>'
-          }
+          ${state.game.selectedCategories.map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join("")}
         </div>
       </div>
     </aside>
@@ -464,74 +457,54 @@ function renderSidebar() {
 
 function renderLobby() {
   const canStart = isHost() && roomReady();
+  const categories = state.game.proposedCategories.map((item) => `
+    <article class="category-chip selected">
+      <strong>${escapeHtml(item.name)}</strong>
+      <small>${formatSource(item.source)}</small>
+      ${isHost() ? `<button type="button" data-remove-category="${escapeAttr(item.name)}" class="ghost">הסר קטגוריה</button>` : ""}
+    </article>
+  `).join("");
+
+  const hostControls = isHost()
+    ? `
+      <div class="stack">
+        <span class="field-label">כמה זמן יישאר לאחר שהראשון מסיים?</span>
+        <div class="toolbar">
+          ${state.game.finishWindowOptions.map((seconds) => `
+            <button type="button" data-finish-window="${seconds}" class="${state.game.finishWindowSeconds === seconds ? "" : "secondary"}">
+              ${formatFinishWindow(seconds)}
+            </button>
+          `).join("")}
+        </div>
+      </div>
+      <form id="category-form" class="stack">
+        <label>
+          הוספת קטגוריה משלכם
+          <input id="category-proposal" maxlength="36" value="${escapeAttr(state.drafts.categoryProposal)}" placeholder="לדוגמה: דברים באוטו" />
+        </label>
+        <div class="toolbar">
+          <button type="submit">➕ הוסף קטגוריה</button>
+          <span class="pill">כרגע ${state.game.proposedCategories.length}/4 קטגוריות</span>
+        </div>
+      </form>
+      <div class="toolbar">
+        <button id="reroll-categories" type="button" class="secondary">🎲 החלפת 4 הקטגוריות</button>
+        <button id="start-game" ${canStart ? "" : "disabled"}>🚀 התחלת משחק</button>
+      </div>
+    `
+    : `<p class="helper">המארח מגדיר את הזמן ויכול לערוך את 4 הקטגוריות לפני תחילת המשחק.</p>`;
+
   return `
     <section class="card stack">
       <div class="title-row">
         <div>
           <h2>קטגוריות לפתיחה 🎯</h2>
-          <p class="status-copy">בכל פתיחת חדר מופיעות 4 קטגוריות אקראיות חדשות. אם הן לא טובות, המארח יכול לרענן ולקבל סט חדש.</p>
+          <p class="status-copy">החדר נפתח עם 4 קטגוריות אקראיות. אפשר להסיר, להוסיף או לרענן אותן לפני שמתחילים.</p>
         </div>
       </div>
-      ${
-        isHost()
-          ? `
-            <div class="stack">
-              <span class="field-label">כמה זמן יישאר לאחר שהראשון מסיים?</span>
-              <div class="toolbar">
-                ${state.game.finishWindowOptions
-                  .map(
-                    (seconds) => `
-                      <button type="button" data-finish-window="${seconds}" class="${state.game.finishWindowSeconds === seconds ? "" : "secondary"}">
-                        ${formatFinishWindow(seconds)}
-                      </button>
-                    `
-                  )
-                  .join("")}
-              </div>
-            </div>
-          `
-          : `<p class="helper">המארח הגדיר ${formatFinishWindow(state.game.finishWindowSeconds)} לשאר השחקנים אחרי שהראשון מסיים.</p>`
-      }
-      ${
-        isHost()
-          ? `
-            <form id="category-form" class="stack">
-              <label>
-                הוספת קטגוריה משלכם
-                <input id="category-proposal" maxlength="36" value="${escapeAttr(state.drafts.categoryProposal)}" placeholder="לדוגמה: דברים באוטו" />
-              </label>
-              <div class="toolbar">
-                <button type="submit">➕ הוסף קטגוריה</button>
-                <span class="pill">כרגע ${state.game.proposedCategories.length}/4 קטגוריות</span>
-              </div>
-            </form>
-          `
-          : ""
-      }
+      ${hostControls}
       <div class="pill">אלה הקטגוריות למשחק הזה</div>
-      <div class="category-grid">
-        ${state.game.proposedCategories
-          .map(
-            (item) => `
-            <article class="category-chip ${state.game.selectedCategories.includes(item.name) ? "selected" : ""}">
-              <strong>${escapeHtml(item.name)}</strong>
-              <small>${formatSource(item.source)}</small>
-              ${isHost() ? `<button type="button" data-remove-category="${escapeAttr(item.name)}" class="ghost">הסר קטגוריה</button>` : ""}
-            </article>
-          `
-          )
-          .join("")}
-      </div>
-      ${
-        isHost()
-          ? `
-            <div class="toolbar">
-              <button id="reroll-categories" type="button" class="secondary">🎲 החלפת 4 הקטגוריות</button>
-              <button id="start-game" ${canStart ? "" : "disabled"}>🚀 התחלת משחק</button>
-            </div>
-          `
-          : '<p class="helper">המארח יכול לרענן את הקטגוריות או להתחיל את המשחק.</p>'
-      }
+      <div class="category-grid">${categories}</div>
     </section>
   `;
 }
@@ -544,7 +517,7 @@ function renderPlaying() {
         <div>
           <div class="pill">סבב ${round.roundNumber} מתוך ${state.game.maxRounds}</div>
           <h2>ממלאים תשובות ✍️</h2>
-          <p class="status-copy">הטיימר לא רץ בהתחלה. הוא יתחיל רק כשמישהו יסיים את כל 4 התשובות, ואז לאחרים יישארו ${formatFinishWindow(state.game.finishWindowSeconds)}.</p>
+          <p class="status-copy">הטיימר יתחיל רק כשהראשון יסיים את כל 4 התשובות.</p>
         </div>
         <div class="stack">
           <div class="letter-badge">${escapeHtml(round.letter)}</div>
@@ -552,22 +525,14 @@ function renderPlaying() {
           <div class="muted" data-save-status>${state.saveStatus || "התשובות נשמרות אוטומטית"}</div>
         </div>
       </div>
-      ${
-        round.triggeredByName
-          ? `<div class="pill countdown-pill">⏰ ${escapeHtml(round.triggeredByName)} השלים ראשון. הספירה לאחור התחילה.</div>`
-          : `<div class="pill">🧠 סיימו את כל הטופס כדי להפעיל את הטיימר לשאר המשתתפים.</div>`
-      }
+      ${round.triggeredByName ? `<div class="pill countdown-pill">⏰ ${escapeHtml(round.triggeredByName)} השלים ראשון. הספירה לאחור התחילה.</div>` : `<div class="pill">🧠 סיימו את כל הטופס כדי להפעיל את הטיימר לשאר המשתתפים.</div>`}
       <form class="answers-grid">
-        ${state.game.selectedCategories
-          .map(
-            (category) => `
-              <label>
-                ${escapeHtml(category)}
-                <input data-answer-category="${escapeAttr(category)}" value="${escapeAttr(state.drafts.answers[category] || "")}" placeholder="מילה שמתחילה ב-${escapeAttr(round.letter)}" />
-              </label>
-            `
-          )
-          .join("")}
+        ${state.game.selectedCategories.map((category) => `
+          <label>
+            ${escapeHtml(category)}
+            <input data-answer-category="${escapeAttr(category)}" value="${escapeAttr(state.drafts.answers[category] || "")}" placeholder="מילה שמתחילה ב-${escapeAttr(round.letter)}" />
+          </label>
+        `).join("")}
       </form>
     </section>
   `;
@@ -575,12 +540,9 @@ function renderPlaying() {
 
 function renderReview() {
   const review = state.game.round.review;
-  const hostActionLabel =
-    review.categoryIndex === review.categoryCount - 1
-      ? state.game.round.roundNumber === state.game.maxRounds
-        ? "🎉 סיום משחק"
-        : "➡️ לסבב הבא"
-      : "➡️ לקטגוריה הבאה";
+  const hostActionLabel = review.categoryIndex === review.categoryCount - 1
+    ? (state.game.round.roundNumber === state.game.maxRounds ? "🎉 סיום משחק" : "➡️ לסבב הבא")
+    : "➡️ לקטגוריה הבאה";
 
   return `
     <section class="stack">
@@ -596,50 +558,34 @@ function renderReview() {
             <div class="pill">קטגוריה ${review.categoryIndex + 1} מתוך ${review.categoryCount}</div>
           </div>
         </div>
-        ${
-          state.game.phase === "review" && isHost()
-            ? `<button id="advance-review">${hostActionLabel}</button>`
-            : state.game.phase === "review"
-              ? `<p class="helper">ממתינים למארח שיעבור לקטגוריה הבאה.</p>`
-              : ""
-        }
+        ${state.game.phase === "review" && isHost() ? `<button id="advance-review">${hostActionLabel}</button>` : ""}
       </div>
       <div class="review-list">
-        ${review.entries
-          .map((entry) => {
-            const likedByMe = entry.likedBy.includes(state.session.player_id);
-            const canApprove = state.session.player_id !== entry.playerId && entry.answer && entry.startsWithLetter;
-            return `
-              <article class="card review-card">
-                <div class="title-row">
-                  <div>
-                    <h3>${escapeHtml(entry.playerName)}</h3>
-                    <p class="muted">נקודות עד כה בסבב: ${entry.roundPoints}</p>
-                  </div>
-                  <div class="points">${entry.basePoints} נק'</div>
+        ${review.entries.map((entry) => {
+          const likedByMe = entry.likedBy.includes(state.session.player_id);
+          const canApprove = state.session.player_id !== entry.playerId && entry.answer && entry.startsWithLetter;
+          return `
+            <article class="card review-card">
+              <div class="title-row">
+                <div>
+                  <h3>${escapeHtml(entry.playerName)}</h3>
+                  <p class="muted">נקודות עד כה בסבב: ${entry.roundPoints}</p>
                 </div>
-                <div class="review-answer">${entry.answer ? escapeHtml(entry.answer) : "<span class='muted'>אין תשובה</span>"}</div>
-                <div class="toolbar">
-                  <span class="pill ${entry.startsWithLetter ? "pill-success" : "pill-danger"}">${entry.startsWithLetter ? "מתחיל באות ✅" : "לא מתחיל באות ❌"}</span>
-                  <span class="pill">אישורים: ${entry.approvalCount}/${entry.approvalsNeeded}</span>
-                  <span class="pill">${entry.approved ? "מאושר לניקוד 🌟" : "ממתין לאישור"}</span>
-                </div>
-                <div class="toolbar">
-                  ${
-                    state.game.phase === "review" && canApprove
-                      ? `<button type="button" data-approval="${escapeAttr(entry.playerId)}" class="approve-button ${entry.approvedByMe ? "" : "secondary"}">${entry.approvedByMe ? "✅ אישרתי" : "✅ אשר תשובה"}</button>`
-                      : ""
-                  }
-                  ${
-                    state.game.phase === "review" && entry.playerId !== state.session.player_id
-                      ? `<button type="button" data-like="${escapeAttr(entry.playerId)}" class="${likedByMe ? "" : "secondary"}">${likedByMe ? "הסר לייק" : "💖 לייק"}</button>`
-                      : `<span class="pill">לייקים: ${entry.likes}</span>`
-                  }
-                </div>
-              </article>
-            `;
-          })
-          .join("")}
+                <div class="points">${entry.basePoints} נק'</div>
+              </div>
+              <div class="review-answer">${entry.answer ? escapeHtml(entry.answer) : "<span class='muted'>אין תשובה</span>"}</div>
+              <div class="toolbar">
+                <span class="pill ${entry.startsWithLetter ? "pill-success" : "pill-danger"}">${entry.startsWithLetter ? "מתחיל באות ✅" : "לא מתחיל באות ❌"}</span>
+                <span class="pill">אישורים: ${entry.approvalCount}/${entry.approvalsNeeded}</span>
+                <span class="pill">${entry.approved ? "מאושר לניקוד 🌟" : "ממתין לאישור"}</span>
+              </div>
+              <div class="toolbar">
+                ${state.game.phase === "review" && canApprove ? `<button type="button" data-approval="${escapeAttr(entry.playerId)}" class="approve-button ${entry.approvedByMe ? "" : "secondary"}">${entry.approvedByMe ? "✅ אישרתי" : "✅ אשר תשובה"}</button>` : ""}
+                ${state.game.phase === "review" && entry.playerId !== state.session.player_id ? `<button type="button" data-like="${escapeAttr(entry.playerId)}" class="${likedByMe ? "" : "secondary"}">${likedByMe ? "הסר לייק" : "💖 לייק"}</button>` : `<span class="pill">לייקים: ${entry.likes}</span>`}
+              </div>
+            </article>
+          `;
+        }).join("")}
       </div>
     </section>
   `;
@@ -661,13 +607,11 @@ function renderFinished() {
 
 function renderGame() {
   captureRenderSnapshot();
-  const showFinishedBanner = state.game.phase === "finished";
-  const main =
-    state.game.phase === "lobby"
-      ? renderLobby()
-      : state.game.phase === "playing"
-        ? renderPlaying()
-        : `${showFinishedBanner ? renderFinished() : ""}${renderReview()}`;
+  const main = state.game.phase === "lobby"
+    ? renderLobby()
+    : state.game.phase === "playing"
+      ? renderPlaying()
+      : `${state.game.phase === "finished" ? renderFinished() : ""}${renderReview()}`;
 
   app.innerHTML = `
     ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ""}
@@ -684,16 +628,10 @@ function renderGame() {
     attachDraftInput("#category-proposal", "categoryProposal");
     document.querySelector("#category-form")?.addEventListener("submit", withErrorHandling(addCategory));
     document.querySelectorAll("[data-finish-window]").forEach((button) => {
-      button.addEventListener(
-        "click",
-        withErrorHandling(() => setFinishWindow(Number(button.getAttribute("data-finish-window"))))
-      );
+      button.addEventListener("click", withErrorHandling(() => setFinishWindow(Number(button.getAttribute("data-finish-window")))));
     });
     document.querySelectorAll("[data-remove-category]").forEach((button) => {
-      button.addEventListener(
-        "click",
-        withErrorHandling(() => removeCategory(button.getAttribute("data-remove-category")))
-      );
+      button.addEventListener("click", withErrorHandling(() => removeCategory(button.getAttribute("data-remove-category"))));
     });
     document.querySelector("#reroll-categories")?.addEventListener("click", withErrorHandling(rerollCategories));
     document.querySelector("#start-game")?.addEventListener("click", withErrorHandling(startGame));
@@ -705,5 +643,7 @@ function renderGame() {
 
   if (state.game.phase === "review" || state.game.phase === "finished") {
     document.querySelectorAll("[data-approval]").forEach((button) => {
-      button.addEventListener(
-        "click",
+      button.addEventListener("click", withErrorHandling(() => toggleApproval(button.getAttribute("data-approval"), state.game.round.review.currentCategory)));
+    });
+    document.querySelectorAll("[data-like]").forEach((button) => {
+      button.addEventListener("click", withErrorHandling(() => toggleLike(button.getAttribute("data-like"), state.game.round.review.currentCategory)));
