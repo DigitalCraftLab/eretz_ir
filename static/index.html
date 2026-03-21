@@ -1,46 +1,4 @@
-<!doctype html>
-<html lang="he" dir="rtl">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ארץ עיר</title>
-    <link rel="stylesheet" href="/static/style.css" />
-  </head>
-  <body>
-    <div class="page-shell">
-      <header class="hero">
-        <p class="eyebrow">משחק קבוצתי בעברית</p>
-        <h1>ארץ עיר</h1>
-        <p class="hero-copy">
-          2 עד 6 משתתפים, כל אחד מהמכשיר שלו. בוחרים 4 קטגוריות, מקבלים אות אקראית, ויש
-          לכם דקה למלא הכל.
-        </p>
-      </header>
+משחק קבוצתי בעברית
+ארץ עיר
+2 עד 6 משתתפים, כל אחד מהמכשיר שלו. בוחרים 4 קטגוריות, מגדירים את אורך הסבב, מקבלים אות אקראית, והמילים נשמרות אוטומטית עד שהזמן נגמר.
 
-      <main id="app" class="app-grid"></main>
-    </div>
-
-    <template id="welcome-template">
-      <section class="card form-card">
-        <h2>פתיחת חדר או הצטרפות</h2>
-        <label>
-          השם שלך
-          <input id="player-name" maxlength="24" placeholder="לדוגמה: יואב" />
-        </label>
-        <div class="button-row">
-          <button id="create-room">יצירת חדר חדש</button>
-        </div>
-        <div class="join-row">
-          <input id="room-code" maxlength="5" placeholder="קוד חדר" />
-          <button id="join-room" class="secondary">הצטרפות לחדר</button>
-        </div>
-        <p class="helper">
-          המארח יבחר 4 קטגוריות וינהל את המעבר בין הסבבים. אפשר להציע קטגוריות משלכם או
-          להשתמש בהצעות אקראיות.
-        </p>
-      </section>
-    </template>
-
-    <script src="/static/app.js"></script>
-  </body>
-</html>
