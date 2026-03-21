@@ -81,6 +81,7 @@ h1 {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
   gap: 18px;
+  position: relative;
 }
 
 .card {
@@ -295,12 +296,86 @@ button:disabled {
   color: var(--green);
 }
 
+.winner-card {
+  text-align: center;
+  background:
+    radial-gradient(circle at top, rgba(255, 211, 120, 0.45), transparent 40%),
+    rgba(255, 252, 245, 0.95);
+}
+
+.winner-burst {
+  font-size: 2rem;
+  letter-spacing: 0.3rem;
+}
+
+.winner-score {
+  font-size: 2.4rem;
+  font-weight: 800;
+  margin: 0;
+  color: var(--accent-strong);
+}
+
+.letter-reveal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(31, 26, 20, 0.18);
+  backdrop-filter: blur(4px);
+  z-index: 20;
+  pointer-events: none;
+  animation: fade-out 1.6s ease forwards;
+}
+
+.letter-reveal-card {
+  min-width: min(88vw, 420px);
+  text-align: center;
+  background: rgba(255, 250, 241, 0.96);
+  border: 1px solid rgba(207, 95, 52, 0.22);
+  border-radius: 34px;
+  padding: 28px 22px;
+  box-shadow: 0 24px 48px rgba(74, 49, 23, 0.2);
+  animation: pop-in 0.45s ease;
+}
+
+.letter-reveal-emoji {
+  font-size: 2rem;
+}
+
+.letter-reveal-letter {
+  font-size: clamp(4rem, 16vw, 7rem);
+  line-height: 1;
+  font-weight: 900;
+  color: var(--accent-strong);
+}
+
 .error-banner {
   background: rgba(167, 71, 36, 0.12);
   border: 1px solid rgba(167, 71, 36, 0.25);
   color: #7d2e15;
   border-radius: 16px;
   padding: 12px 14px;
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.82) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes fade-out {
+  0%,
+  72% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 
 @media (max-width: 920px) {
