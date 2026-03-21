@@ -697,3 +697,33 @@ function render() {
     renderWelcome();
     if (state.error) {
       app.insertAdjacentHTML("afterbegin", '<div class="error-banner">' + escapeHtml(state.error) + "</div>");
+    }
+    return;
+  }
+  renderGame();
+}
+
+function withErrorHandling(fn) {
+  return async (event) => {
+    try {
+      await fn(event);
+    } catch (error) {
+      setError(error.message);
+    }
+  };
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value).replaceAll('"', "&quot;");
+}
+
+startPolling();
+refreshState();
+render();
