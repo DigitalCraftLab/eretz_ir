@@ -144,6 +144,22 @@ class GameStore:
                 raise ValueError("זמן לא תקין")
             room.finish_window_seconds = seconds
 
+    def propose_category(self, room_code: str, player_id: str, category: str) -> None:
+        with self.lock:
+            room = self._get_room(room_code)
+            if room.phase != "lobby":
+                raise ValueError("אפשר להוסיף קטגוריות רק בלובי")
+            self._get_player(room, player_id)
+            label = (category or "").strip()
+            if not label:
+                raise ValueError("צריך להזין קטגוריה")
+            if len(room.proposed_categories) >= CATEGORY_COUNT:
+                raise ValueError("אפשר לשמור עד 4 קטגוריות בלובי")
+            if any(normalize_hebrew(item["name"]) == normalize_hebrew(label) for item in room.proposed_categories):
+                raise ValueError("הקטגוריה כבר קיימת")
+            room.proposed_categories.append({"name": label, "source": "player"})
+            room.selected_categories = [item["name"] for item in room.proposed_categories]
+
     def reroll_categories(self, room_code: str, player_id: str) -> None:
         with self.lock:
             room = self._get_room(room_code)
@@ -152,6 +168,20 @@ class GameStore:
             if room.phase != "lobby":
                 raise ValueError("אפשר לרענן קטגוריות רק בלובי")
             self._reset_lobby_categories(room)
+
+    def remove_category(self, room_code: str, player_id: str, category: str) -> None:
+        with self.lock:
+            room = self._get_room(room_code)
+            if player_id != room.host_id:
+                raise ValueError("רק המארח יכול להסיר קטגוריות")
+            if room.phase != "lobby":
+                raise ValueError("אפשר להסיר קטגוריות רק בלובי")
+            label = (category or "").strip()
+            updated = [item for item in room.proposed_categories if normalize_hebrew(item["name"]) != normalize_hebrew(label)]
+            if len(updated) == len(room.proposed_categories):
+                raise ValueError("הקטגוריה לא נמצאה")
+            room.proposed_categories = updated
+            room.selected_categories = [item["name"] for item in room.proposed_categories]
 
     def start_game(self, room_code: str, player_id: str) -> None:
         with self.lock:
@@ -504,7 +534,13 @@ class AppHandler(BaseHTTPRequestHandler):
             "/api/set-finish-window": lambda: STORE.set_finish_window(
                 body.get("roomCode", ""), body.get("playerId", ""), int(body.get("seconds", 20))
             ),
+            "/api/propose-category": lambda: STORE.propose_category(
+                body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
+            ),
             "/api/reroll-categories": lambda: STORE.reroll_categories(body.get("roomCode", ""), body.get("playerId", "")),
+            "/api/remove-category": lambda: STORE.remove_category(
+                body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
+            ),
             "/api/start-game": lambda: STORE.start_game(body.get("roomCode", ""), body.get("playerId", "")),
             "/api/terminate-game": lambda: STORE.terminate_game(body.get("roomCode", ""), body.get("playerId", "")),
             "/api/save-answers": lambda: STORE.save_answers(
@@ -543,39 +579,3 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def _serve_file(self, path: Path, content_type: str) -> None:
         if not path.exists():
-            self._json_response({"error": "Not found"}, HTTPStatus.NOT_FOUND)
-            return
-        content = path.read_bytes()
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(content)))
-        self.end_headers()
-        self.wfile.write(content)
-
-    def _read_json(self) -> dict[str, Any]:
-        content_length = int(self.headers.get("Content-Length", "0"))
-        raw = self.rfile.read(content_length) if content_length else b"{}"
-        return json.loads(raw or b"{}")
-
-    def _json_response(self, payload: dict[str, Any], status: HTTPStatus) -> None:
-        encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(encoded)))
-        self.end_headers()
-        self.wfile.write(encoded)
-
-    def log_message(self, format: str, *args) -> None:
-        return
-
-
-def main() -> None:
-    host = os.environ.get("HOST", "0.0.0.0")
-    port = int(os.environ.get("PORT", "8000"))
-    server = ThreadingHTTPServer((host, port), AppHandler)
-    print(f"Listening on http://{host}:{port}")
-    server.serve_forever()
-
-
-if __name__ == "__main__":
-    main()
