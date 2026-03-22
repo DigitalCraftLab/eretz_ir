@@ -24,6 +24,7 @@ MAX_ROUNDS = 4
 ROOM_SIZE_LIMIT = 6
 CATEGORY_COUNT = 4
 MAX_PROPOSED_CATEGORIES = 20
+MAX_CHAT_MESSAGES = 60
 
 SUGGESTED_CATEGORIES = [
     "משקאות",
@@ -230,6 +231,7 @@ class Room:
     rounds: list[RoundState] = field(default_factory=list)
     finish_window_seconds: int = 20
     finished_at: float | None = None
+    chat_messages: list[dict[str, Any]] = field(default_factory=list)
 
 
 class GameStore:
@@ -317,6 +319,25 @@ class GameStore:
                 raise ValueError("אין כרגע קטגוריות אקראיות חדשות להוסיף")
             name = random.choice(available)
             room.proposed_categories.append({"name": name, "source": "random", "suggestedBy": "המשחק"})
+
+    def send_chat_message(self, room_code: str, player_id: str, text: str) -> None:
+        with self.lock:
+            room = self._get_room(room_code)
+            player = self._get_player(room, player_id)
+            message = (text or "").strip()
+            if not message:
+                raise ValueError("צריך לכתוב הודעה")
+            room.chat_messages.append(
+                {
+                    "id": uuid4().hex,
+                    "playerId": player.id,
+                    "playerName": player.name,
+                    "text": message[:240],
+                    "createdAt": now_ts(),
+                }
+            )
+            if len(room.chat_messages) > MAX_CHAT_MESSAGES:
+                room.chat_messages = room.chat_messages[-MAX_CHAT_MESSAGES:]
 
     def reroll_categories(self, room_code: str, player_id: str) -> None:
         with self.lock:
@@ -502,6 +523,8 @@ class GameStore:
                     }
                     for item in players
                 ],
+                "chatMessages": deepcopy(room.chat_messages),
+                "roundSummaries": [self._round_summary(room, game_round) for game_round in room.rounds],
                 "winner": {
                     "id": winner.id,
                     "name": winner.name,
@@ -560,9 +583,50 @@ class GameStore:
                     "disqualified": self._is_answer_challenged_out(room, current_round, player_id, category),
                     "likes": len(likes),
                     "likedBy": likes,
+                    "likedByNames": [room.players[liker_id].name for liker_id in likes if liker_id in room.players],
                 }
             )
         return entries
+
+    def _round_summary(self, room: Room, game_round: RoundState) -> dict[str, Any]:
+        rows = []
+        for player_id, player in room.players.items():
+            answers = game_round.answers.get(player_id, {})
+            score_data = game_round.review_scores.get(player_id, {})
+            categories = []
+            total_likes = 0
+            total_challenges = 0
+            for category in room.selected_categories:
+                likes = game_round.likes.get(player_id, {}).get(category, [])
+                challenges = game_round.challenges.get(player_id, {}).get(category, [])
+                total_likes += len(likes)
+                total_challenges += len(challenges)
+                categories.append(
+                    {
+                        "category": category,
+                        "answer": answers.get(category, ""),
+                        "points": score_data.get("base_points", {}).get(category, 0),
+                        "likes": len(likes),
+                        "likeNames": [room.players[liker_id].name for liker_id in likes if liker_id in room.players],
+                        "challenges": len(challenges),
+                        "disqualified": self._is_answer_challenged_out(room, game_round, player_id, category),
+                    }
+                )
+            rows.append(
+                {
+                    "playerId": player_id,
+                    "playerName": player.name,
+                    "roundPoints": score_data.get("round_points", 0),
+                    "totalLikes": total_likes,
+                    "totalChallenges": total_challenges,
+                    "categories": categories,
+                }
+            )
+        return {
+            "roundNumber": game_round.round_number,
+            "letter": game_round.letter,
+            "rows": rows,
+        }
 
     def _reset_lobby_categories(self, room: Room) -> None:
         candidates = SUGGESTED_CATEGORIES[:]
@@ -739,6 +803,9 @@ class AppHandler(BaseHTTPRequestHandler):
             ),
             "/api/add-random-category": lambda: STORE.add_random_category(
                 body.get("roomCode", ""), body.get("playerId", "")
+            ),
+            "/api/send-chat-message": lambda: STORE.send_chat_message(
+                body.get("roomCode", ""), body.get("playerId", ""), body.get("text", "")
             ),
             "/api/reroll-categories": lambda: STORE.reroll_categories(body.get("roomCode", ""), body.get("playerId", "")),
             "/api/remove-category": lambda: STORE.remove_category(
