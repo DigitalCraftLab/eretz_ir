@@ -691,6 +691,9 @@ function renderReview() {
       state.game.phase === "review" && entry.playerId !== state.session.player_id
         ? '<button type="button" data-like="' + escapeAttr(entry.playerId) + '" class="' + (likedByMe ? "" : "secondary") + '">' + (likedByMe ? "הסר לייק" : "💖 לייק") + "</button>"
         : '<span class="pill">לייקים: ' + entry.likes + "</span>";
+    const likedByLine = entry.likedByNames && entry.likedByNames.length
+      ? '<div class="muted">👍 ' + escapeHtml(entry.likedByNames.join(", ")) + "</div>"
+      : "";
 
     return (
       '<article class="card review-card">' +
@@ -713,6 +716,7 @@ function renderReview() {
       '<span class="pill">' +
       (entry.disqualified ? "נפסל בעקבות ערעורים ❌" : (entry.accepted ? "מקבל ניקוד 🌟" : "לא תקין לאות ❌")) +
       "</span></div>" +
+      likedByLine +
       '<div class="toolbar">' +
       challengeButton +
       likePart +
@@ -743,13 +747,63 @@ function renderReview() {
 
 function renderFinished() {
   const winner = state.game.winner;
+  const summariesHtml = (state.game.roundSummaries || []).map((roundSummary) => {
+    const headerCells = state.game.selectedCategories.map((category) => {
+      return "<th>" + escapeHtml(category) + "</th>";
+    }).join("");
+    const rowsHtml = roundSummary.rows.map((row) => {
+      const categoryCells = row.categories.map((item) => {
+        const likeNames = item.likeNames && item.likeNames.length ? "👍 " + item.likeNames.join(", ") : "בלי לייקים";
+        return (
+          "<td><strong>" +
+          escapeHtml(item.answer || "—") +
+          "</strong><br><span class=\"muted\">נקודות: " +
+          item.points +
+          " | לייקים: " +
+          item.likes +
+          " | ערעורים: " +
+          item.challenges +
+          (item.disqualified ? " | נפסל" : "") +
+          "</span><br><span class=\"muted\">" +
+          escapeHtml(likeNames) +
+          "</span></td>"
+        );
+      }).join("");
+      return (
+        "<tr><td><strong>" +
+        escapeHtml(row.playerName) +
+        "</strong></td>" +
+        categoryCells +
+        "<td>" +
+        row.roundPoints +
+        "</td><td>" +
+        row.totalLikes +
+        "</td><td>" +
+        row.totalChallenges +
+        "</td></tr>"
+      );
+    }).join("");
+    return (
+      '<section class="card stack"><div class="title-row"><div><h3>סבב ' +
+      roundSummary.roundNumber +
+      "</h3><p class=\"status-copy\">אות: " +
+      escapeHtml(roundSummary.letter) +
+      "</p></div></div><div class=\"table-wrap\"><table class=\"summary-table\"><thead><tr><th>שחקן</th>" +
+      headerCells +
+      "<th>נקודות</th><th>לייקים</th><th>ערעורים</th></tr></thead><tbody>" +
+      rowsHtml +
+      "</tbody></table></div></section>"
+    );
+  }).join("");
   return (
-    '<section class="card winner-card stack"><div class="winner-burst">🎉 🏆 🎉</div><div class="pill">המשחק נגמר</div><h2>' +
+    '<section class="stack"><section class="card winner-card stack"><div class="winner-burst">🎉 🏆 🎉</div><div class="pill">המשחק נגמר</div><h2>' +
     escapeHtml(winner.name) +
     ' ניצח בגדול!</h2><p class="winner-score">' +
     winner.score +
     ' נקודות</p><p class="status-copy">מחיאות כפיים, זיקוקים ודקה של תהילה מקומית 🎊</p>' +
     (isHost() ? '<button id="restart-game">🔁 משחק חדש</button>' : "") +
+    "</section>" +
+    summariesHtml +
     "</section>"
   );
 }
@@ -760,8 +814,10 @@ function renderGame() {
     main = renderLobby();
   } else if (state.game.phase === "playing") {
     main = renderPlaying();
+  } else if (state.game.phase === "finished") {
+    main = renderFinished();
   } else {
-    main = (state.game.phase === "finished" ? renderFinished() : "") + renderReview();
+    main = renderReview();
   }
 
   app.innerHTML =
