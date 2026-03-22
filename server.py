@@ -23,6 +23,7 @@ FINISH_WINDOW_OPTIONS = [10, 20, 40]
 MAX_ROUNDS = 4
 ROOM_SIZE_LIMIT = 6
 CATEGORY_COUNT = 4
+MAX_PROPOSED_CATEGORIES = 20
 
 SUGGESTED_CATEGORIES = [
     "משקאות",
@@ -37,6 +38,133 @@ SUGGESTED_CATEGORIES = [
     "דברים בבית ספר",
     "דברים שמביאים לפיקניק",
     "סרטים",
+    "שמות של בנות",
+    "שמות של בנים",
+    "מדינות",
+    "בירות בעולם",
+    "נהרות",
+    "הרים",
+    "איים",
+    "חופים",
+    "אתרי תיירות",
+    "חגים",
+    "דברים במטבח",
+    "דברים בסלון",
+    "דברים במקרר",
+    "דברים בחדר שינה",
+    "דברים בחדר אמבטיה",
+    "דברים במשרד",
+    "דברים בגינה",
+    "דברים בסופר",
+    "דברים בשוק",
+    "דברים בבית קפה",
+    "מאפים",
+    "פירות",
+    "ירקות",
+    "קינוחים",
+    "ממתקים",
+    "מאכלי רחוב",
+    "מנות לארוחת בוקר",
+    "מנות לצהריים",
+    "מנות לערב",
+    "תבלינים",
+    "רטבים",
+    "כלי נגינה",
+    "זמרים",
+    "זמרות",
+    "שחקנים",
+    "שחקניות",
+    "סדרות טלוויזיה",
+    "דמויות מסרטים",
+    "גיבורי על",
+    "ספרים",
+    "סופרים",
+    "משוררים",
+    "ציירים",
+    "פסלים",
+    "מוזיאונים",
+    "ריקודים",
+    "ספורטאים",
+    "ענפי ספורט",
+    "קבוצות כדורגל",
+    "קבוצות כדורסל",
+    "אצטדיונים",
+    "תרגילי כושר",
+    "דברים בים",
+    "חיות מחמד",
+    "חיות בר",
+    "ציפורים",
+    "דגים",
+    "חרקים",
+    "פרחים",
+    "עצים",
+    "צמחים",
+    "אבני חן",
+    "צבעים",
+    "בדים",
+    "בגדים",
+    "נעליים",
+    "אביזרי אופנה",
+    "מותגי אופנה",
+    "חפצים בתיק",
+    "ציוד לבית ספר",
+    "מקצועות לימוד",
+    "אפליקציות",
+    "אתרי אינטרנט",
+    "רשתות חברתיות",
+    "מכשירים אלקטרוניים",
+    "מותגי טלפונים",
+    "משחקי וידאו",
+    "משחקי קופסה",
+    "צעצועים",
+    "עבודות בבית",
+    "מקצועות עתידיים",
+    "כלי תחבורה",
+    "חלקים ברכב",
+    "דברים בתחנת דלק",
+    "דברים בשדה תעופה",
+    "דברים במטוס",
+    "דברים ברכבת",
+    "דברים באוטובוס",
+    "ערים בישראל",
+    "יישובים בישראל",
+    "אתרים בישראל",
+    "דברים במדבר",
+    "דברים בטבע",
+    "מזג אוויר",
+    "מילים שמביעות רגש",
+    "מילים חיוביות",
+    "מילים מצחיקות",
+    "עבודות בית",
+    "משהו שאורזים לחופשה",
+    "דברים למסיבה",
+    "דברים לחתונה",
+    "דברים ליום הולדת",
+    "מתנות",
+    "דברים שעושים בשבת",
+    "דברים שאומרים למורה",
+    "דברים שאומרים לילד",
+    "קללות בלי קללה",
+    "עבודות יצירה",
+    "חומרים ליצירה",
+    "מותגי רכב",
+    "חברות תעופה",
+    "מקצועות ברפואה",
+    "דברים בבית חולים",
+    "דברים בבית מרקחת",
+    "קוסמטיקה",
+    "בשמים",
+    "מקצועות במה",
+    "דברים בחורף",
+    "דברים בקיץ",
+    "דברים באביב",
+    "דברים בסתיו",
+    "פסטיבלים",
+    "ערוצי יוטיוב",
+    "פודקאסטים",
+    "עיתונים",
+    "מאכלים ישראליים",
+    "מילים באנגלית שכולם משתמשים בהן",
 ]
 
 
@@ -83,7 +211,7 @@ class RoundState:
     ends_at: float | None = None
     triggered_by: str | None = None
     answers: dict[str, dict[str, str]] = field(default_factory=dict)
-    approvals: dict[str, dict[str, list[str]]] = field(default_factory=dict)
+    challenges: dict[str, dict[str, list[str]]] = field(default_factory=dict)
     review_scores: dict[str, dict[str, Any]] = field(default_factory=dict)
     likes: dict[str, dict[str, list[str]]] = field(default_factory=dict)
     review_category_index: int = 0
@@ -149,16 +277,46 @@ class GameStore:
             room = self._get_room(room_code)
             if room.phase != "lobby":
                 raise ValueError("אפשר להוסיף קטגוריות רק בלובי")
-            self._get_player(room, player_id)
+            player = self._get_player(room, player_id)
             label = (category or "").strip()
             if not label:
                 raise ValueError("צריך להזין קטגוריה")
-            if len(room.proposed_categories) >= CATEGORY_COUNT:
-                raise ValueError("אפשר לשמור עד 4 קטגוריות בלובי")
+            if len(room.proposed_categories) >= MAX_PROPOSED_CATEGORIES:
+                raise ValueError("אפשר לשמור עד 12 הצעות בלובי")
             if any(normalize_hebrew(item["name"]) == normalize_hebrew(label) for item in room.proposed_categories):
                 raise ValueError("הקטגוריה כבר קיימת")
-            room.proposed_categories.append({"name": label, "source": "player"})
-            room.selected_categories = [item["name"] for item in room.proposed_categories]
+            room.proposed_categories.append({"name": label, "source": "player", "suggestedBy": player.name})
+
+    def toggle_selected_category(self, room_code: str, player_id: str, category: str) -> None:
+        with self.lock:
+            room = self._get_room(room_code)
+            if player_id != room.host_id:
+                raise ValueError("רק המארח יכול לבחור את הקטגוריות")
+            if room.phase != "lobby":
+                raise ValueError("אפשר לבחור קטגוריות רק בלובי")
+            category_name = self._find_proposed_category(room, category)
+            if category_name in room.selected_categories:
+                room.selected_categories = [item for item in room.selected_categories if normalize_hebrew(item) != normalize_hebrew(category_name)]
+                return
+            if len(room.selected_categories) >= CATEGORY_COUNT:
+                raise ValueError("אפשר לבחור רק 4 קטגוריות")
+            room.selected_categories.append(category_name)
+
+    def add_random_category(self, room_code: str, player_id: str) -> None:
+        with self.lock:
+            room = self._get_room(room_code)
+            if player_id != room.host_id:
+                raise ValueError("רק המארח יכול להוסיף קטגוריה אקראית")
+            if room.phase != "lobby":
+                raise ValueError("אפשר להוסיף קטגוריה אקראית רק בלובי")
+            if len(room.proposed_categories) >= MAX_PROPOSED_CATEGORIES:
+                raise ValueError("הגעתם למספר ההצעות המקסימלי")
+            used = {normalize_hebrew(item["name"]) for item in room.proposed_categories}
+            available = [name for name in SUGGESTED_CATEGORIES if normalize_hebrew(name) not in used]
+            if not available:
+                raise ValueError("אין כרגע קטגוריות אקראיות חדשות להוסיף")
+            name = random.choice(available)
+            room.proposed_categories.append({"name": name, "source": "random", "suggestedBy": "המשחק"})
 
     def reroll_categories(self, room_code: str, player_id: str) -> None:
         with self.lock:
@@ -181,7 +339,7 @@ class GameStore:
             if len(updated) == len(room.proposed_categories):
                 raise ValueError("הקטגוריה לא נמצאה")
             room.proposed_categories = updated
-            room.selected_categories = [item["name"] for item in room.proposed_categories]
+            room.selected_categories = [item for item in room.selected_categories if normalize_hebrew(item) != normalize_hebrew(label)]
 
     def start_game(self, room_code: str, player_id: str) -> None:
         with self.lock:
@@ -194,7 +352,6 @@ class GameStore:
                 raise ValueError("צריך לבחור 4 קטגוריות")
             if room.phase not in {"lobby", "finished"}:
                 raise ValueError("המשחק כבר התחיל")
-            room.selected_categories = [item["name"] for item in room.proposed_categories[:CATEGORY_COUNT]]
             room.rounds = []
             room.finished_at = None
             room.phase = "playing"
@@ -251,26 +408,26 @@ class GameStore:
             current.ends_at = current.countdown_started_at + room.finish_window_seconds
             current.triggered_by = player.id
 
-    def toggle_approval(self, room_code: str, player_id: str, target_player_id: str, category: str) -> None:
+    def toggle_challenge(self, room_code: str, player_id: str, target_player_id: str, category: str) -> None:
         with self.lock:
             room = self._get_room(room_code)
             self._get_player(room, player_id)
             self._ensure_round_up_to_date(room)
             if room.phase != "review":
-                raise ValueError("אפשר לאשר תשובות רק בזמן הבדיקה")
+                raise ValueError("אפשר לערער על תשובות רק בזמן הבדיקה")
             if target_player_id == player_id:
-                raise ValueError("אי אפשר לאשר את התשובה של עצמך")
+                raise ValueError("אי אפשר לערער על התשובה של עצמך")
             current = room.rounds[-1]
-            if target_player_id not in current.approvals:
+            if target_player_id not in current.challenges:
                 raise ValueError("שחקן לא נמצא")
             category_name = self._find_selected_category(room, category)
             if not current.answers[target_player_id].get(category_name, "").strip():
-                raise ValueError("אין תשובה לאשר")
-            approvals = current.approvals[target_player_id][category_name]
-            if player_id in approvals:
-                approvals.remove(player_id)
+                raise ValueError("אין תשובה לערער עליה")
+            challenges = current.challenges[target_player_id][category_name]
+            if player_id in challenges:
+                challenges.remove(player_id)
             else:
-                approvals.append(player_id)
+                challenges.append(player_id)
             self._recompute_round_scores_locked(room, current)
             self._recompute_totals_locked(room)
 
@@ -329,7 +486,13 @@ class GameStore:
                 "playerId": player.id,
                 "playerName": player.name,
                 "selectedCategories": room.selected_categories,
-                "proposedCategories": [deepcopy(item) for item in room.proposed_categories],
+                "proposedCategories": [
+                    {
+                        **deepcopy(item),
+                        "selected": any(normalize_hebrew(item["name"]) == normalize_hebrew(selected) for selected in room.selected_categories),
+                    }
+                    for item in room.proposed_categories
+                ],
                 "players": [
                     {
                         "id": item.id,
@@ -377,9 +540,9 @@ class GameStore:
 
     def _review_entries(self, room: Room, current_round: RoundState, category: str, viewer_id: str) -> list[dict[str, Any]]:
         entries = []
-        approvals_needed = max(0, len(room.players) - 1)
+        challenge_threshold = max(1, (len(room.players) + 1) // 2)
         for player_id, score_data in current_round.review_scores.items():
-            approvals = current_round.approvals.get(player_id, {}).get(category, [])
+            challenges = current_round.challenges.get(player_id, {}).get(category, [])
             likes = current_round.likes.get(player_id, {}).get(category, [])
             starts_with_letter = answer_starts_with_letter(score_data["answers"].get(category, ""), current_round.letter)
             entries.append(
@@ -390,10 +553,11 @@ class GameStore:
                     "basePoints": score_data["base_points"].get(category, 0),
                     "roundPoints": score_data["round_points"],
                     "startsWithLetter": starts_with_letter,
-                    "approvalsNeeded": approvals_needed,
-                    "approvalCount": len(approvals),
-                    "approvedByMe": viewer_id in approvals,
-                    "approved": self._is_answer_approved(room, current_round, player_id, category),
+                    "challengeThreshold": challenge_threshold,
+                    "challengeCount": len(challenges),
+                    "challengedByMe": viewer_id in challenges,
+                    "accepted": self._is_answer_accepted(room, current_round, player_id, category),
+                    "disqualified": self._is_answer_challenged_out(room, current_round, player_id, category),
                     "likes": len(likes),
                     "likedBy": likes,
                 }
@@ -404,7 +568,7 @@ class GameStore:
         candidates = SUGGESTED_CATEGORIES[:]
         random.shuffle(candidates)
         selected = candidates[:CATEGORY_COUNT]
-        room.proposed_categories = [{"name": name, "source": "random"} for name in selected]
+        room.proposed_categories = [{"name": name, "source": "random", "suggestedBy": "המשחק"} for name in selected]
         room.category_votes = {name: [] for name in selected}
         room.selected_categories = selected[:]
 
@@ -437,10 +601,10 @@ class GameStore:
     def _prepare_review_locked(self, room: Room, current: RoundState) -> None:
         for player_id in room.players:
             current.answers.setdefault(player_id, {category: "" for category in room.selected_categories})
-            current.approvals.setdefault(player_id, {})
+            current.challenges.setdefault(player_id, {})
             current.likes.setdefault(player_id, {})
             for category in room.selected_categories:
-                current.approvals[player_id].setdefault(category, [])
+                current.challenges[player_id].setdefault(category, [])
                 current.likes[player_id].setdefault(category, [])
         current.review_category_index = 0
         self._recompute_round_scores_locked(room, current)
@@ -449,7 +613,7 @@ class GameStore:
         normalized_by_category: dict[str, dict[str, list[str]]] = {category: {} for category in room.selected_categories}
         for player_id, answers in current.answers.items():
             for category in room.selected_categories:
-                if not self._is_answer_approved(room, current, player_id, category):
+                if not self._is_answer_accepted(room, current, player_id, category):
                     continue
                 normalized = normalize_hebrew(answers.get(category, ""))
                 if normalized:
@@ -459,7 +623,7 @@ class GameStore:
             base_points: dict[str, int] = {}
             round_points = 0
             for category in room.selected_categories:
-                if not self._is_answer_approved(room, current, player_id, category):
+                if not self._is_answer_accepted(room, current, player_id, category):
                     base_points[category] = 0
                     continue
                 normalized = normalize_hebrew(answers.get(category, ""))
@@ -486,13 +650,16 @@ class GameStore:
                 room.players[player_id].total_score += like_count
                 room.players[player_id].liked_received += like_count
 
-    def _is_answer_approved(self, room: Room, current: RoundState, player_id: str, category: str) -> bool:
+    def _is_answer_accepted(self, room: Room, current: RoundState, player_id: str, category: str) -> bool:
         answer = current.answers.get(player_id, {}).get(category, "").strip()
         if not answer or not answer_starts_with_letter(answer, current.letter):
             return False
-        approvals = current.approvals.get(player_id, {}).get(category, [])
-        approvals_needed = max(0, len(room.players) - 1)
-        return len(approvals) >= approvals_needed
+        return not self._is_answer_challenged_out(room, current, player_id, category)
+
+    def _is_answer_challenged_out(self, room: Room, current: RoundState, player_id: str, category: str) -> bool:
+        challenges = current.challenges.get(player_id, {}).get(category, [])
+        threshold = max(1, (len(room.players) + 1) // 2)
+        return len(challenges) >= threshold
 
     def _is_form_complete(self, categories: list[str], answers: dict[str, str]) -> bool:
         return all((answers.get(category, "") or "").strip() for category in categories)
@@ -515,6 +682,13 @@ class GameStore:
         for item in room.selected_categories:
             if normalize_hebrew(item) == normalize_hebrew(label):
                 return item
+        raise ValueError("הקטגוריה לא קיימת")
+
+    def _find_proposed_category(self, room: Room, category: str) -> str:
+        label = (category or "").strip()
+        for item in room.proposed_categories:
+            if normalize_hebrew(item["name"]) == normalize_hebrew(label):
+                return item["name"]
         raise ValueError("הקטגוריה לא קיימת")
 
     def _validate_player_name(self, player_name: str) -> str:
@@ -560,6 +734,12 @@ class AppHandler(BaseHTTPRequestHandler):
             "/api/propose-category": lambda: STORE.propose_category(
                 body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
             ),
+            "/api/toggle-selected-category": lambda: STORE.toggle_selected_category(
+                body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
+            ),
+            "/api/add-random-category": lambda: STORE.add_random_category(
+                body.get("roomCode", ""), body.get("playerId", "")
+            ),
             "/api/reroll-categories": lambda: STORE.reroll_categories(body.get("roomCode", ""), body.get("playerId", "")),
             "/api/remove-category": lambda: STORE.remove_category(
                 body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
@@ -571,7 +751,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 body.get("roomCode", ""), body.get("playerId", ""), body.get("answers", {})
             ),
             "/api/trigger-countdown": lambda: STORE.trigger_countdown(body.get("roomCode", ""), body.get("playerId", "")),
-            "/api/toggle-approval": lambda: STORE.toggle_approval(
+            "/api/toggle-challenge": lambda: STORE.toggle_challenge(
                 body.get("roomCode", ""),
                 body.get("playerId", ""),
                 body.get("targetPlayerId", ""),
