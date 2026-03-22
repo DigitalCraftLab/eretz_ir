@@ -239,6 +239,28 @@ button:disabled {
   display: block;
 }
 
+.chat-list {
+  display: grid;
+  gap: 10px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.chat-message {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.72);
+  padding: 12px 14px;
+}
+
+.chat-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
 .category-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -281,6 +303,21 @@ button:disabled {
 .timer {
   font-size: 1.1rem;
   font-weight: 700;
+}
+
+.timer-label {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.round-meter {
+  align-items: center;
+  min-width: 180px;
+}
+
+#finish-round {
+  align-self: start;
+  padding-inline: 22px;
 }
 
 .review-list {

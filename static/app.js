@@ -11,6 +11,7 @@ const state = {
     playerName: "",
     roomCode: "",
     categoryProposal: "",
+    chatMessage: "",
     answers: {},
   },
   lastRoundKey: null,
@@ -221,6 +222,21 @@ async function addRandomCategory() {
     roomCode: state.session.room_code,
     playerId: state.session.player_id,
   });
+  await refreshState();
+}
+
+async function sendChatMessage(event) {
+  event.preventDefault();
+  const text = state.drafts.chatMessage.trim();
+  if (!text) {
+    return;
+  }
+  await api("/api/send-chat-message", {
+    roomCode: state.session.room_code,
+    playerId: state.session.player_id,
+    text,
+  });
+  state.drafts.chatMessage = "";
   await refreshState();
 }
 
@@ -481,6 +497,18 @@ function renderSidebar() {
   const categoriesHtml = state.game.selectedCategories.map((item) => {
     return '<span class="pill">' + escapeHtml(item) + "</span>";
   }).join("");
+  const chatHtml = (state.game.chatMessages || []).map((message) => {
+    return (
+      '<article class="chat-message">' +
+      '<div class="chat-head"><strong>' +
+      escapeHtml(message.playerName) +
+      '</strong>' +
+      (message.playerId === state.session.player_id ? '<span class="pill">את/ה</span>' : "") +
+      "</div><div>" +
+      escapeHtml(message.text) +
+      "</div></article>"
+    );
+  }).join("");
 
   const terminateButton =
     (state.game.phase === "playing" || state.game.phase === "review") && isHost()
@@ -502,6 +530,11 @@ function renderSidebar() {
     '<div class="sidebar-section"><h3>סגירת טיימר 🏁</h3><div class="pill">אחרי שהראשון מסיים: ' +
     formatFinishWindow(state.game.finishWindowSeconds) +
     "</div></div>" +
+    '<div class="sidebar-section"><h3>צ׳אט 💬</h3><div class="chat-list">' +
+    (chatHtml || '<div class="muted">עדיין אין הודעות. תתחילו לדבר 😊</div>') +
+    '</div><form id="chat-form" class="stack"><input id="chat-message" maxlength="240" value="' +
+    escapeAttr(state.drafts.chatMessage) +
+    '" placeholder="כותבים הודעה לחדר..." /><button type="submit" class="secondary">שליחה</button></form></div>' +
     '<div class="sidebar-section"><h3>קטגוריות במשחק 🗂️</h3><div class="category-chip-row">' +
     categoriesHtml +
     "</div></div></aside>"
@@ -741,6 +774,9 @@ function renderGame() {
 
   const shareButton = document.querySelector("#share-room");
   if (shareButton) shareButton.addEventListener("click", withErrorHandling(shareRoom));
+  attachDraftInput("#chat-message", "chatMessage");
+  const chatForm = document.querySelector("#chat-form");
+  if (chatForm) chatForm.addEventListener("submit", withErrorHandling(sendChatMessage));
 
   if (state.game.phase === "lobby") {
     attachDraftInput("#category-proposal", "categoryProposal");
