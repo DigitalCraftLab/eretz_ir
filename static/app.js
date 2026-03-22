@@ -216,6 +216,14 @@ async function toggleSelectedCategory(category) {
   await refreshState();
 }
 
+async function addRandomCategory() {
+  await api("/api/add-random-category", {
+    roomCode: state.session.room_code,
+    playerId: state.session.player_id,
+  });
+  await refreshState();
+}
+
 async function setFinishWindow(seconds) {
   await api("/api/set-finish-window", {
     roomCode: state.session.room_code,
@@ -538,6 +546,7 @@ function renderLobby() {
       state.game.proposedCategories.length +
       "</span></div></form>" +
       '<div class="toolbar">' +
+      '<button id="add-random-category" type="button" class="secondary">🎲 הוסף קטגוריה אקראית</button>' +
       '<button id="start-game" ' +
       (roomReady() ? "" : "disabled") +
       '>🚀 התחלת משחק</button></div>';
@@ -733,6 +742,8 @@ function renderGame() {
     document.querySelectorAll("[data-remove-category]").forEach((button) => {
       button.addEventListener("click", withErrorHandling(() => removeCategory(button.getAttribute("data-remove-category"))));
     });
+    const addRandomButton = document.querySelector("#add-random-category");
+    if (addRandomButton) addRandomButton.addEventListener("click", withErrorHandling(addRandomCategory));
     const startButton = document.querySelector("#start-game");
     if (startButton) startButton.addEventListener("click", withErrorHandling(startGame));
   }
