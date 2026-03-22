@@ -249,6 +249,18 @@ async function returnToLobby() {
   await refreshState();
 }
 
+function leaveToWelcome() {
+  clearSession();
+  state.game = null;
+  state.error = "";
+  state.lastRoundKey = null;
+  state.drafts.answers = {};
+  const url = new URL(window.location.href);
+  url.searchParams.delete("room");
+  window.history.replaceState({}, "", url.toString());
+  render();
+}
+
 async function terminateGame() {
   await api("/api/terminate-game", {
     roomCode: state.session.room_code,
@@ -547,6 +559,7 @@ function renderLobby() {
       "</span></div></form>" +
       '<div class="toolbar">' +
       '<button id="add-random-category" type="button" class="secondary">🎲 הוסף קטגוריה אקראית</button>' +
+      '<button id="reset-to-welcome" type="button" class="ghost">↩️ חזרה לפתיחת חדר</button>' +
       '<button id="start-game" ' +
       (roomReady() ? "" : "disabled") +
       '>🚀 התחלת משחק</button></div>';
@@ -744,6 +757,8 @@ function renderGame() {
     });
     const addRandomButton = document.querySelector("#add-random-category");
     if (addRandomButton) addRandomButton.addEventListener("click", withErrorHandling(addRandomCategory));
+    const resetButton = document.querySelector("#reset-to-welcome");
+    if (resetButton) resetButton.addEventListener("click", leaveToWelcome);
     const startButton = document.querySelector("#start-game");
     if (startButton) startButton.addEventListener("click", withErrorHandling(startGame));
   }
