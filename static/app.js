@@ -102,6 +102,15 @@ async function joinRoom() {
   await refreshState();
 }
 
+async function removePlayer(targetPlayerId) {
+  await api("/api/remove-player", {
+    roomCode: state.session.room_code,
+    playerId: state.session.player_id,
+    targetPlayerId,
+  });
+  await refreshState();
+}
+
 async function refreshState() {
   if (!state.session) {
     clearInterval(state.timerHandle);
@@ -481,15 +490,21 @@ function renderWelcome() {
 
 function renderSidebar() {
   const playersHtml = state.game.players.map((player) => {
+    const removeButton =
+      state.game.phase === "lobby" && isHost() && player.id !== state.game.hostId
+        ? '<button type="button" data-remove-player="' + escapeAttr(player.id) + '" class="ghost">הסר</button>'
+        : "";
     return (
       '<div class="player-row">' +
       "<div><strong>" +
       escapeHtml(player.name) +
       "</strong><span class=\"muted\">" +
       (player.id === state.game.hostId ? "מארח" : "שחקן") +
-      "</span></div>" +
+      "</span></div><div class=\"toolbar\">" +
       '<div class="points">' +
       player.totalScore +
+      "</div>" +
+      removeButton +
       "</div></div>"
     );
   }).join("");
@@ -694,6 +709,9 @@ function renderReview() {
     const likedByLine = entry.likedByNames && entry.likedByNames.length
       ? '<div class="muted">👍 ' + escapeHtml(entry.likedByNames.join(", ")) + "</div>"
       : "";
+    const challengedByLine = entry.challengedByNames && entry.challengedByNames.length
+      ? '<div class="muted">⚠️ ' + escapeHtml(entry.challengedByNames.join(", ")) + "</div>"
+      : "";
 
     return (
       '<article class="card review-card">' +
@@ -717,6 +735,7 @@ function renderReview() {
       (entry.disqualified ? "נפסל בעקבות ערעורים ❌" : (entry.accepted ? "מקבל ניקוד 🌟" : "לא תקין לאות ❌")) +
       "</span></div>" +
       likedByLine +
+      challengedByLine +
       '<div class="toolbar">' +
       challengeButton +
       likePart +
@@ -833,6 +852,9 @@ function renderGame() {
   attachDraftInput("#chat-message", "chatMessage");
   const chatForm = document.querySelector("#chat-form");
   if (chatForm) chatForm.addEventListener("submit", withErrorHandling(sendChatMessage));
+  document.querySelectorAll("[data-remove-player]").forEach((button) => {
+    button.addEventListener("click", withErrorHandling(() => removePlayer(button.getAttribute("data-remove-player"))));
+  });
 
   if (state.game.phase === "lobby") {
     attachDraftInput("#category-proposal", "categoryProposal");
