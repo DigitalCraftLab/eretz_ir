@@ -228,6 +228,7 @@ class Room:
     selected_categories: list[str] = field(default_factory=list)
     proposed_categories: list[dict[str, Any]] = field(default_factory=list)
     category_votes: dict[str, list[str]] = field(default_factory=dict)
+    category_rejections: dict[str, list[str]] = field(default_factory=dict)
     rounds: list[RoundState] = field(default_factory=list)
     finish_window_seconds: int = 20
     finished_at: float | None = None
@@ -256,12 +257,28 @@ class GameStore:
             room = self._get_room(room_code)
             if room.phase != "lobby":
                 raise ValueError("אפשר להצטרף רק לפני תחילת המשחק")
+            cleaned_name = self._validate_player_name(player_name)
+            for existing in room.players.values():
+                if normalize_hebrew(existing.name) == normalize_hebrew(cleaned_name):
+                    return {"room_code": room.code, "player_id": existing.id}
             if len(room.players) >= ROOM_SIZE_LIMIT:
                 raise ValueError("החדר מלא")
-            cleaned_name = self._validate_player_name(player_name)
             player = Player(id=uuid4().hex, name=cleaned_name, joined_at=now_ts())
             room.players[player.id] = player
             return {"room_code": room.code, "player_id": player.id}
+
+    def remove_player(self, room_code: str, player_id: str, target_player_id: str) -> None:
+        with self.lock:
+            room = self._get_room(room_code)
+            if player_id != room.host_id:
+                raise ValueError("רק המארח יכול להסיר שחקנים")
+            if room.phase != "lobby":
+                raise ValueError("אפשר להסיר שחקנים רק לפני תחילת המשחק")
+            if target_player_id == room.host_id:
+                raise ValueError("אי אפשר להסיר את המארח")
+            if target_player_id not in room.players:
+                raise ValueError("השחקן לא נמצא")
+            del room.players[target_player_id]
 
     def set_finish_window(self, room_code: str, player_id: str, seconds: int) -> None:
         with self.lock:
@@ -288,6 +305,8 @@ class GameStore:
             if any(normalize_hebrew(item["name"]) == normalize_hebrew(label) for item in room.proposed_categories):
                 raise ValueError("הקטגוריה כבר קיימת")
             room.proposed_categories.append({"name": label, "source": "player", "suggestedBy": player.name})
+            room.category_votes[label] = []
+            room.category_rejections[label] = []
 
     def toggle_selected_category(self, room_code: str, player_id: str, category: str) -> None:
         with self.lock:
@@ -319,6 +338,44 @@ class GameStore:
                 raise ValueError("אין כרגע קטגוריות אקראיות חדשות להוסיף")
             name = random.choice(available)
             room.proposed_categories.append({"name": name, "source": "random", "suggestedBy": "המשחק"})
+            room.category_votes[name] = []
+            room.category_rejections[name] = []
+
+    def toggle_category_vote(self, room_code: str, player_id: str, category: str) -> None:
+        with self.lock:
+            room = self._get_room(room_code)
+            self._get_player(room, player_id)
+            if room.phase != "lobby":
+                raise ValueError("אפשר לסמן קטגוריות רק בלובי")
+            category_name = self._find_proposed_category(room, category)
+            room.category_votes.setdefault(category_name, [])
+            room.category_rejections.setdefault(category_name, [])
+            votes = room.category_votes[category_name]
+            rejections = room.category_rejections[category_name]
+            if player_id in votes:
+                votes.remove(player_id)
+            else:
+                votes.append(player_id)
+                if player_id in rejections:
+                    rejections.remove(player_id)
+
+    def toggle_category_rejection(self, room_code: str, player_id: str, category: str) -> None:
+        with self.lock:
+            room = self._get_room(room_code)
+            self._get_player(room, player_id)
+            if room.phase != "lobby":
+                raise ValueError("אפשר לסמן קטגוריות רק בלובי")
+            category_name = self._find_proposed_category(room, category)
+            room.category_votes.setdefault(category_name, [])
+            room.category_rejections.setdefault(category_name, [])
+            votes = room.category_votes[category_name]
+            rejections = room.category_rejections[category_name]
+            if player_id in rejections:
+                rejections.remove(player_id)
+            else:
+                rejections.append(player_id)
+                if player_id in votes:
+                    votes.remove(player_id)
 
     def send_chat_message(self, room_code: str, player_id: str, text: str) -> None:
         with self.lock:
@@ -361,6 +418,12 @@ class GameStore:
                 raise ValueError("הקטגוריה לא נמצאה")
             room.proposed_categories = updated
             room.selected_categories = [item for item in room.selected_categories if normalize_hebrew(item) != normalize_hebrew(label)]
+            room.category_votes = {
+                key: voters for key, voters in room.category_votes.items() if normalize_hebrew(key) != normalize_hebrew(label)
+            }
+            room.category_rejections = {
+                key: voters for key, voters in room.category_rejections.items() if normalize_hebrew(key) != normalize_hebrew(label)
+            }
 
     def start_game(self, room_code: str, player_id: str) -> None:
         with self.lock:
@@ -511,6 +574,12 @@ class GameStore:
                     {
                         **deepcopy(item),
                         "selected": any(normalize_hebrew(item["name"]) == normalize_hebrew(selected) for selected in room.selected_categories),
+                        "voteCount": len(room.category_votes.get(item["name"], [])),
+                        "rejectionCount": len(room.category_rejections.get(item["name"], [])),
+                        "likedByMe": player.id in room.category_votes.get(item["name"], []),
+                        "rejectedByMe": player.id in room.category_rejections.get(item["name"], []),
+                        "likedByNames": [room.players[voter_id].name for voter_id in room.category_votes.get(item["name"], []) if voter_id in room.players],
+                        "rejectedByNames": [room.players[voter_id].name for voter_id in room.category_rejections.get(item["name"], []) if voter_id in room.players],
                     }
                     for item in room.proposed_categories
                 ],
@@ -581,6 +650,7 @@ class GameStore:
                     "challengedByMe": viewer_id in challenges,
                     "accepted": self._is_answer_accepted(room, current_round, player_id, category),
                     "disqualified": self._is_answer_challenged_out(room, current_round, player_id, category),
+                    "challengedByNames": [room.players[challenger_id].name for challenger_id in challenges if challenger_id in room.players],
                     "likes": len(likes),
                     "likedBy": likes,
                     "likedByNames": [room.players[liker_id].name for liker_id in likes if liker_id in room.players],
@@ -634,6 +704,7 @@ class GameStore:
         selected = candidates[:CATEGORY_COUNT]
         room.proposed_categories = [{"name": name, "source": "random", "suggestedBy": "המשחק"} for name in selected]
         room.category_votes = {name: [] for name in selected}
+        room.category_rejections = {name: [] for name in selected}
         room.selected_categories = selected[:]
 
     def _start_next_round_locked(self, room: Room) -> None:
@@ -771,6 +842,12 @@ class AppHandler(BaseHTTPRequestHandler):
         if parsed.path == "/":
             self._serve_file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
             return
+        if parsed.path == "/knit":
+            self._serve_file(STATIC_DIR / "knit.html", "text/html; charset=utf-8")
+            return
+        if parsed.path == "/knit-single":
+            self._serve_file(STATIC_DIR / "knit-single.html", "text/html; charset=utf-8")
+            return
         if parsed.path.startswith("/static/"):
             target = STATIC_DIR / parsed.path.removeprefix("/static/")
             mime = "text/plain; charset=utf-8"
@@ -792,10 +869,19 @@ class AppHandler(BaseHTTPRequestHandler):
         routes = {
             "/api/create-room": lambda: STORE.create_room(body.get("name", "")),
             "/api/join-room": lambda: STORE.join_room(body.get("roomCode", ""), body.get("name", "")),
+            "/api/remove-player": lambda: STORE.remove_player(
+                body.get("roomCode", ""), body.get("playerId", ""), body.get("targetPlayerId", "")
+            ),
             "/api/set-finish-window": lambda: STORE.set_finish_window(
                 body.get("roomCode", ""), body.get("playerId", ""), int(body.get("seconds", 20))
             ),
             "/api/propose-category": lambda: STORE.propose_category(
+                body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
+            ),
+            "/api/toggle-category-vote": lambda: STORE.toggle_category_vote(
+                body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
+            ),
+            "/api/toggle-category-rejection": lambda: STORE.toggle_category_rejection(
                 body.get("roomCode", ""), body.get("playerId", ""), body.get("category", "")
             ),
             "/api/toggle-selected-category": lambda: STORE.toggle_selected_category(
