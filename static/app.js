@@ -111,6 +111,24 @@ async function removePlayer(targetPlayerId) {
   await refreshState();
 }
 
+async function toggleCategoryVote(category) {
+  await api("/api/toggle-category-vote", {
+    roomCode: state.session.room_code,
+    playerId: state.session.player_id,
+    category,
+  });
+  await refreshState();
+}
+
+async function toggleCategoryRejection(category) {
+  await api("/api/toggle-category-rejection", {
+    roomCode: state.session.room_code,
+    playerId: state.session.player_id,
+    category,
+  });
+  await refreshState();
+}
+
 async function refreshState() {
   if (!state.session) {
     clearInterval(state.timerHandle);
@@ -561,6 +579,20 @@ function renderLobby() {
   const selectedSet = new Set(state.game.selectedCategories || []);
   const categoriesHtml = state.game.proposedCategories.map((item) => {
     const isSelected = selectedSet.has(item.name);
+    const feedbackButtons =
+      '<div class="toolbar">' +
+      '<button type="button" data-category-like="' + escapeAttr(item.name) + '" class="' + (item.likedByMe ? "" : "secondary") + '">' +
+      (item.likedByMe ? "👍 אהבתי" : "👍 לייק") +
+      " (" + item.voteCount + ")</button>" +
+      '<button type="button" data-category-reject="' + escapeAttr(item.name) + '" class="' + (item.rejectedByMe ? "" : "secondary") + '">' +
+      (item.rejectedByMe ? "👎 דחיתי" : "👎 דחייה") +
+      " (" + item.rejectionCount + ")</button></div>";
+    const likedByLine = item.likedByNames && item.likedByNames.length
+      ? '<div class="muted">👍 ' + escapeHtml(item.likedByNames.join(", ")) + "</div>"
+      : "";
+    const rejectedByLine = item.rejectedByNames && item.rejectedByNames.length
+      ? '<div class="muted">👎 ' + escapeHtml(item.rejectedByNames.join(", ")) + "</div>"
+      : "";
     const chooseButton = host
       ? '<button type="button" data-select-category="' + escapeAttr(item.name) + '" class="' + (isSelected ? "" : "secondary") + '">' +
         (isSelected ? "✅ נבחר למשחק" : "בחירה למשחק") +
@@ -576,6 +608,9 @@ function renderLobby() {
       formatSource(item.source) +
       (item.suggestedBy ? " • " + escapeHtml(item.suggestedBy) : "") +
       "</small>" +
+      feedbackButtons +
+      likedByLine +
+      rejectedByLine +
       chooseButton +
       removeButton +
       "</article>"
@@ -865,6 +900,12 @@ function renderGame() {
     });
     document.querySelectorAll("[data-select-category]").forEach((button) => {
       button.addEventListener("click", withErrorHandling(() => toggleSelectedCategory(button.getAttribute("data-select-category"))));
+    });
+    document.querySelectorAll("[data-category-like]").forEach((button) => {
+      button.addEventListener("click", withErrorHandling(() => toggleCategoryVote(button.getAttribute("data-category-like"))));
+    });
+    document.querySelectorAll("[data-category-reject]").forEach((button) => {
+      button.addEventListener("click", withErrorHandling(() => toggleCategoryRejection(button.getAttribute("data-category-reject"))));
     });
     document.querySelectorAll("[data-remove-category]").forEach((button) => {
       button.addEventListener("click", withErrorHandling(() => removeCategory(button.getAttribute("data-remove-category"))));
