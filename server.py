@@ -1,4 +1,5 @@
 import json
+import html
 import os
 import random
 import re
@@ -233,11 +234,15 @@ class Room:
     finish_window_seconds: int = 20
     finished_at: float | None = None
     chat_messages: list[dict[str, Any]] = field(default_factory=list)
+    game_started_at: float | None = None
+    stats_archived: bool = False
 
 
 class GameStore:
     def __init__(self) -> None:
         self.rooms: dict[str, Room] = {}
+        self.game_history: list[dict[str, Any]] = []
+        self.category_popularity: dict[str, int] = {}
         self.lock = threading.Lock()
 
     def create_room(self, player_name: str) -> dict[str, str]:
@@ -437,7 +442,9 @@ class GameStore:
             if room.phase not in {"lobby", "finished"}:
                 raise ValueError("המשחק כבר התחיל")
             room.rounds = []
+            room.game_started_at = now_ts()
             room.finished_at = None
+            room.stats_archived = False
             room.phase = "playing"
             self._start_next_round_locked(room)
             self._recompute_totals_locked(room)
@@ -447,8 +454,10 @@ class GameStore:
             room = self._get_room(room_code)
             if player_id != room.host_id:
                 raise ValueError("רק המארח יכול לפתוח משחק חדש")
+            self._archive_room_if_needed(room)
             room.phase = "lobby"
             room.rounds = []
+            room.game_started_at = None
             room.finished_at = None
             self._reset_lobby_categories(room)
             self._recompute_totals_locked(room)
@@ -462,6 +471,7 @@ class GameStore:
                 raise ValueError("אין משחק פעיל לסיים")
             room.phase = "finished"
             room.finished_at = now_ts()
+            self._archive_room_if_needed(room)
             self._recompute_totals_locked(room)
 
     def save_answers(self, room_code: str, player_id: str, answers: dict[str, str]) -> None:
@@ -551,6 +561,7 @@ class GameStore:
             if len(room.rounds) >= MAX_ROUNDS:
                 room.phase = "finished"
                 room.finished_at = now_ts()
+                self._archive_room_if_needed(room)
             else:
                 room.phase = "playing"
                 self._start_next_round_locked(room)
@@ -605,6 +616,21 @@ class GameStore:
                 "maxRounds": MAX_ROUNDS,
                 "finishWindowSeconds": room.finish_window_seconds,
                 "finishWindowOptions": FINISH_WINDOW_OPTIONS,
+            }
+
+    def get_admin_statistics(self) -> dict[str, Any]:
+        with self.lock:
+            games = list(reversed(self.game_history))
+            popular_categories = sorted(
+                (
+                    {"category": category, "count": count}
+                    for category, count in self.category_popularity.items()
+                ),
+                key=lambda item: (-item["count"], item["category"]),
+            )
+            return {
+                "games": games,
+                "popularCategories": popular_categories,
             }
 
     def _round_snapshot(self, room: Room, current_round: RoundState | None, viewer_id: str) -> dict[str, Any] | None:
@@ -706,6 +732,29 @@ class GameStore:
         room.category_votes = {name: [] for name in selected}
         room.category_rejections = {name: [] for name in selected}
         room.selected_categories = selected[:]
+
+    def _archive_room_if_needed(self, room: Room) -> None:
+        if room.stats_archived or not room.game_started_at or not room.rounds:
+            return
+        finished_at = room.finished_at or now_ts()
+        admin = room.players.get(room.host_id)
+        player_count = len(room.players)
+        duration_seconds = max(0, int(finished_at - room.game_started_at))
+        categories = room.selected_categories[:]
+        self.game_history.append(
+            {
+                "roomCode": room.code,
+                "startedAt": room.game_started_at,
+                "finishedAt": finished_at,
+                "adminName": admin.name if admin else "לא ידוע",
+                "playerCount": player_count,
+                "durationSeconds": duration_seconds,
+                "categories": categories,
+            }
+        )
+        for category in categories:
+            self.category_popularity[category] = self.category_popularity.get(category, 0) + 1
+        room.stats_archived = True
 
     def _start_next_round_locked(self, room: Room) -> None:
         used_letters = {entry.letter for entry in room.rounds}
@@ -836,11 +885,195 @@ class GameStore:
 STORE = GameStore()
 
 
+def format_timestamp(ts: float) -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+
+
+def format_duration(seconds: int) -> str:
+    minutes, secs = divmod(max(0, int(seconds)), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def render_admin_page(stats: dict[str, Any]) -> str:
+    games_rows = "".join(
+        (
+            "<tr>"
+            f"<td>{html.escape(game['roomCode'])}</td>"
+            f"<td>{html.escape(format_timestamp(game['startedAt']))}</td>"
+            f"<td>{html.escape(format_timestamp(game['finishedAt']))}</td>"
+            f"<td>{html.escape(game['adminName'])}</td>"
+            f"<td>{game['playerCount']}</td>"
+            f"<td>{html.escape(format_duration(game['durationSeconds']))}</td>"
+            f"<td>{html.escape(', '.join(game['categories']))}</td>"
+            "</tr>"
+        )
+        for game in stats["games"]
+    )
+    if not games_rows:
+        games_rows = '<tr><td colspan="7">עדיין אין משחקים שהסתיימו.</td></tr>'
+
+    categories_rows = "".join(
+        (
+            "<tr>"
+            f"<td>{index}</td>"
+            f"<td>{html.escape(item['category'])}</td>"
+            f"<td>{item['count']}</td>"
+            "</tr>"
+        )
+        for index, item in enumerate(stats["popularCategories"], start=1)
+    )
+    if not categories_rows:
+        categories_rows = '<tr><td colspan="3">עדיין אין נתוני קטגוריות.</td></tr>'
+
+    return f"""<!doctype html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>סטטיסטיקות מנהל</title>
+    <style>
+      body {{
+        margin: 0;
+        font-family: "Arial Hebrew", "Noto Sans Hebrew", sans-serif;
+        background: #f7f1e7;
+        color: #241c14;
+      }}
+      main {{
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 32px 18px 48px;
+      }}
+      .card {{
+        background: rgba(255,255,255,0.88);
+        border: 1px solid rgba(94, 64, 33, 0.15);
+        border-radius: 24px;
+        padding: 22px;
+        box-shadow: 0 18px 40px rgba(74, 49, 23, 0.1);
+      }}
+      .stack > * + * {{
+        margin-top: 16px;
+      }}
+      .hero {{
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+        align-items: end;
+      }}
+      .pill {{
+        display: inline-flex;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: #fff7eb;
+        border: 1px solid rgba(94, 64, 33, 0.15);
+      }}
+      .table-wrap {{
+        overflow-x: auto;
+      }}
+      table {{
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 760px;
+      }}
+      th, td {{
+        text-align: right;
+        padding: 12px 10px;
+        border-bottom: 1px solid rgba(94, 64, 33, 0.12);
+        vertical-align: top;
+      }}
+      th {{
+        color: #786858;
+        font-size: 0.94rem;
+      }}
+      h1, h2 {{
+        margin: 0;
+      }}
+      p {{
+        margin: 0;
+        color: #6f6255;
+      }}
+      .grid {{
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 18px;
+      }}
+      @media (max-width: 900px) {{
+        .grid {{
+          grid-template-columns: 1fr;
+        }}
+      }}
+    </style>
+  </head>
+  <body>
+    <main class="stack">
+      <section class="card stack">
+        <div class="hero">
+          <div class="stack">
+            <div class="pill">עמוד ניהול</div>
+            <h1>סטטיסטיקות משחק</h1>
+            <p>מעקב אחרי משחקים שהסתיימו וקטגוריות נבחרות.</p>
+          </div>
+          <div class="pill">סה״כ משחקים: {len(stats["games"])}</div>
+        </div>
+      </section>
+      <section class="grid">
+        <section class="card stack">
+          <h2>רשימת משחקים</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>קוד חדר</th>
+                  <th>תחילת משחק</th>
+                  <th>סיום משחק</th>
+                  <th>מארח</th>
+                  <th>שחקנים</th>
+                  <th>משך</th>
+                  <th>קטגוריות נבחרות</th>
+                </tr>
+              </thead>
+              <tbody>{games_rows}</tbody>
+            </table>
+          </div>
+        </section>
+        <section class="card stack">
+          <h2>קטגוריות פופולריות</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>קטגוריה</th>
+                  <th>כמות בחירות</th>
+                </tr>
+              </thead>
+              <tbody>{categories_rows}</tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>"""
+
+
 class AppHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == "/":
             self._serve_file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
+            return
+        if parsed.path == "/admin":
+            stats = STORE.get_admin_statistics()
+            content = render_admin_page(stats).encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
             return
         if parsed.path == "/knit":
             self._serve_file(STATIC_DIR / "knit.html", "text/html; charset=utf-8")
