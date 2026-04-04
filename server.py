@@ -18,6 +18,7 @@ from uuid import uuid4
 
 BASE_DIR = Path(__file__).parent
 STATIC_DIR = BASE_DIR / "static"
+ADMIN_STATS_PATH = Path(os.environ.get("ADMIN_STATS_PATH", str(BASE_DIR / "admin_stats.json")))
 
 HEBREW_LETTERS = list("אבגדהוזחטיכלמנסעפצקרשת")
 FINISH_WINDOW_OPTIONS = [10, 20, 40]
@@ -244,6 +245,7 @@ class GameStore:
         self.game_history: list[dict[str, Any]] = []
         self.category_popularity: dict[str, int] = {}
         self.lock = threading.Lock()
+        self._load_admin_stats()
 
     def create_room(self, player_name: str) -> dict[str, str]:
         with self.lock:
@@ -755,6 +757,40 @@ class GameStore:
         for category in categories:
             self.category_popularity[category] = self.category_popularity.get(category, 0) + 1
         room.stats_archived = True
+        self._save_admin_stats()
+
+    def _load_admin_stats(self) -> None:
+        if not ADMIN_STATS_PATH.exists():
+            return
+        try:
+            payload = json.loads(ADMIN_STATS_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        games = payload.get("games", [])
+        popularity = payload.get("categoryPopularity", {})
+        if isinstance(games, list):
+            self.game_history = [item for item in games if isinstance(item, dict)]
+        if isinstance(popularity, dict):
+            self.category_popularity = {
+                str(category): int(count)
+                for category, count in popularity.items()
+                if isinstance(category, str) and isinstance(count, int)
+            }
+
+    def _save_admin_stats(self) -> None:
+        payload = {
+            "games": self.game_history,
+            "categoryPopularity": self.category_popularity,
+        }
+        try:
+            ADMIN_STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            ADMIN_STATS_PATH.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            # Stats persistence is best-effort; the game should continue even if disk writes fail.
+            return
 
     def _start_next_round_locked(self, room: Room) -> None:
         used_letters = {entry.letter for entry in room.rounds}
